@@ -46,9 +46,11 @@ def _run_generated_code(description: str, speak: Callable | None = None) -> str:
         except Exception:
             pass
 
+    from config import get_gemini_model
+
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name=get_gemini_model(),
         system_instruction=(
             "You are an expert Python developer. "
             "Write clean, complete, working Python code. "
@@ -129,8 +131,10 @@ def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "")
     return params
 def _detect_language(text: str) -> str:
     import google.generativeai as genai
+    from config import get_gemini_lite_model
+
     genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+    model = genai.GenerativeModel(get_gemini_lite_model())
     try:
         response = model.generate_content(
             f"What language is this text written in? "
@@ -147,9 +151,10 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         return content
     try:
         import google.generativeai as genai
-        genai.configure(api_key=_get_api_key())
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        from config import get_gemini_model
 
+        genai.configure(api_key=_get_api_key())
+        model = genai.GenerativeModel(get_gemini_model())
         target_lang = _detect_language(goal)
         print(f"[Executor] 🌐 Translating to: {target_lang}")
 
@@ -180,9 +185,6 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
     elif tool == "web_search":
         from actions.web_search import web_search
         return web_search(parameters=parameters, player=None) or "Done."
-    elif tool == "game_updater":
-        from actions.game_updater import game_updater
-        return game_updater(parameters=parameters, player=None, speak=speak) or "Done."
     elif tool == "browser_control":
         from actions.browser_control import browser_control
         return browser_control(parameters=parameters, player=None) or "Done."
@@ -192,7 +194,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         return file_controller(parameters=parameters, player=None) or "Done."
 
     elif tool == "cmd_control":
-        from actions.cmd_control import cmd_control
+        from actions.cmdF_control import cmd_control
         return cmd_control(parameters=parameters, player=None) or "Done."
 
     elif tool == "code_helper":
@@ -382,8 +384,10 @@ class AgentExecutor:
         fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
         try:
             import google.generativeai as genai
+            from config import get_gemini_lite_model
+
             genai.configure(api_key=_get_api_key())
-            model     = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
+            model     = genai.GenerativeModel(model_name=get_gemini_lite_model())
             steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
             prompt    = (
                 f'User goal: "{goal}"\n'

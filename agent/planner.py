@@ -36,13 +36,6 @@ web_search
   items: list of strings (optional, for compare mode)
   aspect: string (optional, for compare mode)
 
-game_updater
-  action: "update" | "install" | "list" | "download_status" | "schedule" (required)
-  platform: "steam" | "epic" | "both" (optional, default: both)
-  game_name: string (optional)
-  app_id: string (optional)
-  shutdown_when_done: boolean (optional)
-
 browser_control
   action: "go_to" | "search" | "click" | "type" | "scroll" | "get_text" | "press" | "close" (required)
   url: string (for go_to)
@@ -136,16 +129,6 @@ Steps:
 file_controller | action: list, path: desktop
 file_controller | action: largest, path: desktop, count: 5
 
-Goal: "Install PUBG from Steam"
-Steps:
-
-game_updater | action: install, platform: steam, game_name: "PUBG"
-
-Goal: "Update all my Steam games"
-Steps:
-
-game_updater | action: update, platform: steam
-
 Goal: "Send John a message on WhatsApp saying there is a meeting tomorrow"
 Steps:
 
@@ -180,9 +163,11 @@ def _get_api_key() -> str:
 def create_plan(goal: str, context: str = "") -> dict:
     import google.generativeai as genai
 
+    from config import get_gemini_lite_model
+
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite",
+        model_name=get_gemini_lite_model(),
         system_instruction=PLANNER_PROMPT
     )
 
@@ -240,9 +225,11 @@ def _fallback_plan(goal: str) -> dict:
 def replan(goal: str, completed_steps: list, failed_step: dict, error: str) -> dict:
     import google.generativeai as genai
 
+    from config import get_gemini_model
+
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name=get_gemini_model(),
         system_instruction=PLANNER_PROMPT
     )
 
