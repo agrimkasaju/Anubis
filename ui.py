@@ -14,7 +14,7 @@ from pathlib import Path
 import psutil
 
 from PyQt6.QtCore import (
-    QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
+    QEasingCurve, QEvent, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
     QTimer, QUrl, pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -122,7 +122,6 @@ class _SysMetrics:
             self.tmp = tmp
 
     def _get_gpu(self) -> float:
-        # NVIDIA
         try:
             r = subprocess.run(
                 ["nvidia-smi", "--query-gpu=utilization.gpu",
@@ -136,7 +135,6 @@ class _SysMetrics:
         except Exception:
             pass
 
-        # AMD (Linux)
         if _OS == "Linux":
             try:
                 r = subprocess.run(
@@ -154,7 +152,6 @@ class _SysMetrics:
             except Exception:
                 pass
 
-            # Intel GPU (Linux)
             try:
                 r = subprocess.run(
                     ["intel_gpu_top", "-J", "-s", "500"],
@@ -168,7 +165,6 @@ class _SysMetrics:
             except Exception:
                 pass
 
-        # macOS — powermetrics (GPU Engine)
         if _OS == "Darwin":
             try:
                 r = subprocess.run(
@@ -352,7 +348,6 @@ class HudCanvas(QWidget):
         cx, cy = W / 2, H / 2
         fw = min(W, H)
 
-        # grid dots
         p.setPen(QPen(qcol(C.PRI_GHO), 1))
         for x in range(0, W, 48):
             for y in range(0, H, 48):
@@ -360,7 +355,6 @@ class HudCanvas(QWidget):
 
         r_face = fw * 0.31
 
-        # halo glow
         for i in range(10):
             r   = r_face * (1.8 - i * 0.08)
             frc = 1.0 - i / 10
@@ -369,14 +363,12 @@ class HudCanvas(QWidget):
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
 
-        # pulse rings
         for pr in self._pulses:
             a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
             col = qcol(C.MUTED_C if self.muted else C.PRI, a)
             p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
 
-        # spinning arc rings
         for idx, (r_frac, w_r, arc_l, gap) in enumerate(
             [(0.48, 3, 115, 78), (0.40, 2, 78, 55), (0.32, 1, 56, 40)]
         ):
@@ -391,7 +383,6 @@ class HudCanvas(QWidget):
                 p.drawArc(rect, int(angle * 16), int(arc_l * 16))
                 angle += arc_l + gap
 
-        # scanners
         sr = fw * 0.50
         sa = min(255, int(self._halo * 1.5))
         ex = 75 if self.speaking else 44
@@ -402,7 +393,6 @@ class HudCanvas(QWidget):
         p.setPen(QPen(qcol(C.ACC, sa // 2), 1.5))
         p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
 
-        # tick marks
         t_out, t_in = fw * 0.497, fw * 0.474
         p.setPen(QPen(qcol(C.PRI, 140), 1))
         for deg in range(0, 360, 10):
@@ -413,7 +403,6 @@ class HudCanvas(QWidget):
                 QPointF(cx + inn  * math.cos(rad), cy - inn  * math.sin(rad)),
             )
 
-        # crosshair
         ch_r, gap_h = fw * 0.51, fw * 0.16
         p.setPen(QPen(qcol(C.PRI, int(self._halo * 0.5)), 1))
         p.drawLine(QPointF(cx - ch_r, cy), QPointF(cx - gap_h, cy))
@@ -421,7 +410,6 @@ class HudCanvas(QWidget):
         p.drawLine(QPointF(cx, cy - ch_r), QPointF(cx, cy - gap_h))
         p.drawLine(QPointF(cx, cy + gap_h), QPointF(cx, cy + ch_r))
 
-        # corner brackets
         bl = 24
         bc = qcol(C.PRI, 210)
         hl, hr = cx - fw // 2, cx + fw // 2
@@ -431,7 +419,6 @@ class HudCanvas(QWidget):
             p.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
             p.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
 
-        # face
         if self._face_px:
             fsz    = int(fw * 0.62 * self._scale)
             scaled = self._face_px.scaled(
@@ -453,16 +440,14 @@ class HudCanvas(QWidget):
             p.setPen(QPen(qcol(C.PRI, min(255, int(self._halo * 2))), 1))
             p.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
             p.drawText(QRectF(cx - 80, cy - 14, 160, 28),
-                       Qt.AlignmentFlag.AlignCenter, "J.A.R.V.I.S")
+                       Qt.AlignmentFlag.AlignCenter, "O.R.I.O.N")
 
-        # particles
         for pt in self._particles:
             a = max(0, min(255, int(pt[4] * 255)))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(qcol(C.PRI, a)))
             p.drawEllipse(QPointF(pt[0], pt[1]), 2.5, 2.5)
 
-        # status text
         sy = cy + fw * 0.40
         if self.muted:
             txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
@@ -485,7 +470,6 @@ class HudCanvas(QWidget):
         p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
         p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
 
-        # waveform
         wy = sy + 30
         N, bw = 36, 8
         wx0 = (W - N * bw) / 2
@@ -501,12 +485,11 @@ class HudCanvas(QWidget):
             p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
 
 class MetricBar(QWidget):
-
     def __init__(self, label: str, color: str = C.PRI, parent=None):
         super().__init__(parent)
         self._label = label
         self._color = color
-        self._value = 0.0       # 0–100
+        self._value = 0.0
         self._text  = "--"
         self.setFixedHeight(38)
         self.setMinimumWidth(80)
@@ -607,7 +590,7 @@ class LogWidget(QTextEdit):
         self._pos    = 0
         tl = self._text.lower()
         if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith("jarvis:"): self._tag = "ai"
+        elif tl.startswith("orion:"): self._tag = "ai"
         elif tl.startswith("file:"):   self._tag = "file"
         elif "err" in tl:              self._tag = "err"
         else:                          self._tag = "sys"
@@ -733,7 +716,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
+            self, "Select a file for O.R.I.O.N", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -888,7 +871,7 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Configure O.R.I.O.N before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -1012,10 +995,11 @@ class SetupOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _state_sig = pyqtSignal(str)
+    wake_signal = pyqtSignal()
 
     def __init__(self, face_path: str):
         super().__init__()
-        self.setWindowTitle("J.A.R.V.I.S — MARK XXXIX")
+        self.setWindowTitle("O.R.I.O.N — MARK I")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -1060,7 +1044,6 @@ class MainWindow(QMainWindow):
         self._clock_tmr.start(1000)
         self._tick_clock()
 
-        # Metrik güncelleme timer'ı
         self._metric_tmr = QTimer(self)
         self._metric_tmr.timeout.connect(self._update_metrics)
         self._metric_tmr.start(2000)
@@ -1068,6 +1051,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self.wake_signal.connect(self.bring_to_front)
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -1085,6 +1069,44 @@ class MainWindow(QMainWindow):
         else:
             self.showFullScreen()
 
+    def closeEvent(self, event):
+        """Instantly hides the UI and resets wake-word buffers to prevent pop-up bounces."""
+        event.ignore()
+
+        listener = getattr(self, 'listener', None)
+        if listener:
+            listener.pause_listening()
+
+        self.setDisabled(True)
+        self.hide()
+        QApplication.sendPostedEvents()
+
+        def _deferred_resume():
+            listener = getattr(self, 'listener', None)
+            if listener:
+                listener.resume_listening()
+                print("🐺 [ANUBIS]: Wake-word predictions resumed cleanly.")
+            self.setDisabled(False)
+
+        QTimer.singleShot(300, _deferred_resume)
+        print("🐺 [ANUBIS]: Window hidden to background.")
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            listener = getattr(self, 'listener', None)
+            
+            if self.isMinimized():
+                print("🐺 [ANUBIS]: Window minimized, wake listener remaining active/paused.")
+            else:
+                print("🐺 [ANUBIS]: Window restored.")
+                if listener:
+                    if not getattr(listener, 'running', False):
+                        print("🐺 [ANUBIS]: Starting wake-word listener...")
+                        listener.start()
+                    else:
+                        listener.resume_listening()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._overlay and self._overlay.isVisible():
@@ -1099,31 +1121,26 @@ class MainWindow(QMainWindow):
     def _update_metrics(self):
         snap = _metrics.snapshot()
 
-        # CPU
         cpu = snap["cpu"]
         self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
 
-        # MEM
         mem = snap["mem"]
         self._bar_mem.set_value(mem, f"{mem:.0f}%")
 
-        # NET
         net = snap["net"]
         if net < 1.0:
             net_str = f"{net*1024:.0f}KB/s"
         else:
             net_str = f"{net:.1f}MB/s"
-        net_pct = min(100, net * 10)  # 10 MB/s = %100
+        net_pct = min(100, net * 10)
         self._bar_net.set_value(net_pct, net_str)
 
-        # GPU
         gpu = snap["gpu"]
         if gpu >= 0:
             self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
         else:
             self._bar_gpu.set_value(0, "N/A")
 
-        # TMP
         tmp = snap["tmp"]
         if tmp >= 0:
             tmp_pct = min(100, (tmp / 100) * 100)
@@ -1146,7 +1163,6 @@ class MainWindow(QMainWindow):
         except Exception:
             self._proc_lbl.setText("PROC  --")
 
-
     def _build_header(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(54)
@@ -1164,12 +1180,12 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
-        title = QLabel("J.A.R.V.I.S")
+        title = QLabel("O.R.I.O.N")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(title)
-        sub = QLabel("Just A Rather Very Intelligent System")
+        sub = QLabel("Overwatch Reconnaissance and Intelligence Network")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setFont(QFont("Courier New", 7))
         sub.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
@@ -1264,6 +1280,7 @@ class MainWindow(QMainWindow):
             lay.addWidget(lbl)
 
         return w
+
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
@@ -1385,7 +1402,7 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell JARVIS what to do with it")
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell O.R.I.O.N what to do with it")
         self._log.append_log(f"FILE: {p.name} ({size}) loaded")
         if self.on_text_command:
             msg = (
@@ -1443,7 +1460,7 @@ class MainWindow(QMainWindow):
         try:
             d = json.loads(API_FILE.read_text(encoding="utf-8"))
             return (bool(d.get("gemini_api_key")) and
-                    bool(d.get("openrouter_api_key")) and
+                    bool(d.get("groq_api_key")) and
                     bool(d.get("os_system")))
         except Exception:
             return False
@@ -1461,7 +1478,19 @@ class MainWindow(QMainWindow):
         ov.show()
         self._overlay = ov
 
-    # Change signature:
+    def bring_to_front(self):
+        """Pops UI on screen and pauses wake-word predictions."""
+        listener = getattr(self, 'listener', None)
+        if listener:
+            listener.pause_listening()
+            print("🐺 [ANUBIS]: Wake-word predictions paused.")
+
+        self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        print("🐺 [ANUBIS]: Window popped up on screen.")
+
     def _on_setup_done(self, key: str, or_key: str, os_name: str):
         os.makedirs(CONFIG_DIR, exist_ok=True)
         API_FILE.write_text(
@@ -1477,7 +1506,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. JARVIS online.")
+        self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. O.R.I.O.N online.")
 
 class _RootShim:
     def __init__(self, app: QApplication):
@@ -1489,12 +1518,28 @@ class _RootShim:
 
 
 class JarvisUI:
-    def __init__(self, face_path: str, size=None):
+    def __init__(self, face_path: str, size=None, minimized: bool = False):
         self._app = QApplication.instance() or QApplication(sys.argv)
+        self._app.setQuitOnLastWindowClosed(False)
         self._app.setStyle("Fusion")
         self._win = MainWindow(face_path)
-        self._win.show()
+        if minimized:
+            self._win.hide()
+        else:
+            self._win.show()
         self.root = _RootShim(self._app)
+
+    @property
+    def listener(self):
+        return getattr(self._win, "listener", None)
+
+    @listener.setter
+    def listener(self, l):
+        self._win.listener = l
+
+    @property
+    def wake_signal(self):
+        return self._win.wake_signal
 
     @property
     def muted(self) -> bool:

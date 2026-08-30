@@ -1,14 +1,24 @@
+from __future__ import annotations
+import os
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+import warnings
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 import asyncio
 import threading
 import json
 import sys
 import traceback
+import signal
 from pathlib import Path
 
 import sounddevice as sd
 from google import genai
 from google.genai import types
 from ui import JarvisUI
+from config import get_gemini_live_model
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -30,8 +40,29 @@ from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
+from core.wake_word import WakeWordListener
+from job_bridge import bridge
 
+ui_instance = None
+
+
+def on_wake_word_detected():
+    if ui_instance is not None:
+        ui_instance.wake_signal.emit()
+
+def wake_from_signal(signum, frame):
+    """Triggered when COSMIC DE sends the SIGUSR1 signal."""
+    print("\n⌨️ [ANUBIS]: COSMIC shortcut detected! Waking Orion...")
+    on_wake_word_detected()
+
+class ShortcutListener:
+    def __init__(self, callback):
+        self.callback = callback
+        self.listener = None
+
+    def on_activate(self):
+        print("\n⌨️ [ANUBIS]: Shortcut detected! Waking Orion...")
+        self.callback()
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -42,7 +73,7 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL = get_gemini_live_model().replace("models/", "")
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -59,9 +90,12 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are ORION, an advanced AI assistant. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
-            "Never simulate or guess results — always call the appropriate tool."
+            "CRITICAL RULE: You HAVE live internet and real-time market access through your tools. "
+            "If a user asks about general market conditions, tech stocks, or news, you MUST immediately use the `web_search` tool to find the answer. "
+            "If a user asks about a specific company or stock, you MUST immediately use the `get_stock_analysis` tool to fetch its data. "
+            "NEVER claim you lack live access, and NEVER tell the user to check news sources like Bloomberg or CNBC themselves. You must do the research for them."
         )
     
 _last_memory_input = ""
@@ -85,7 +119,10 @@ def _update_memory_async(user_text: str, jarvis_text: str) -> None:
             update_memory(data)
             print(f"[Memory] ✅ {list(data.keys())}")
     except Exception as e:
-        if "429" not in str(e):
+        # Ignore rate limit errors so they don't stall the app thread
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            print("[Memory] ⏳ Rate limited on memory extraction — skipping silently.")
+        else:
             print(f"[Memory] ⚠️ {e}")
 
 TOOL_DECLARATIONS = [
@@ -235,6 +272,23 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "confirm_job_application",
+        "description": (
+            "Confirms or rejects submitting the pending job application when the user "
+            "answers yes, send it, no, or skip."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "approve | reject | skip"
+                }
+            },
+            "required": ["action"]
+        }
+    },
+    {
         "name": "file_controller",
         "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
         "parameters": {
@@ -304,7 +358,7 @@ TOOL_DECLARATIONS = [
         "description": (
             "Executes complex multi-step tasks requiring multiple different tools. "
             "Examples: 'research X and save to file', 'find and organize files'. "
-            "DO NOT use for single commands. NEVER use for Steam/Epic — use game_updater."
+            "ALWAYS call this tool for any multi-step task. "
         ),
         "parameters": {
             "type": "OBJECT",
@@ -341,29 +395,6 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "game_updater",
-        "description": (
-            "THE ONLY tool for ANY Steam or Epic Games request. "
-            "Use for: installing, downloading, updating games, listing installed games, "
-            "checking download status, scheduling updates. "
-            "ALWAYS call directly for any Steam/Epic/game request. "
-            "NEVER use agent_task, browser_control, or web_search for Steam/Epic."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":    {"type": "STRING",  "description": "update | install | list | download_status | schedule | cancel_schedule | schedule_status (default: update)"},
-                "platform":  {"type": "STRING",  "description": "steam | epic | both (default: both)"},
-                "game_name": {"type": "STRING",  "description": "Game name (partial match supported)"},
-                "app_id":    {"type": "STRING",  "description": "Steam AppID for install (optional)"},
-                "hour":      {"type": "INTEGER", "description": "Hour for scheduled update 0-23 (default: 3)"},
-                "minute":    {"type": "INTEGER", "description": "Minute for scheduled update 0-59 (default: 0)"},
-                "shutdown_when_done": {"type": "BOOLEAN", "description": "Shut down PC when download finishes"},
-            },
-            "required": []
-        }
-    },
-    {
         "name": "flight_finder",
         "description": "Searches Google Flights and speaks the best options.",
         "parameters": {
@@ -381,83 +412,83 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-    "name": "file_processor",
-    "description": (
-        "Processes any file that the user has uploaded or dropped onto the interface. "
-        "Use this when the user refers to an uploaded file and wants an action on it. "
-        "Supports: images (describe/ocr/resize/compress/convert), "
-        "PDFs (summarize/extract_text/to_word), "
-        "Word docs & text files (summarize/fix/reformat/translate), "
-        "CSV/Excel (analyze/stats/filter/sort/convert), "
-        "JSON/XML (validate/format/analyze), "
-        "code files (explain/review/fix/optimize/run/document/test), "
-        "audio (transcribe/trim/convert/info), "
-        "video (trim/extract_audio/extract_frame/compress/transcribe/info), "
-        "archives (list/extract), "
-        "presentations (summarize/extract_text). "
-        "ALWAYS call this tool when a file has been uploaded and the user gives a command about it. "
-        "If the user's command is ambiguous, pick the most logical action for that file type."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "file_path": {
-                "type": "STRING",
-                "description": "Full path to the uploaded file. Leave empty to use the currently uploaded file."
+        "name": "file_processor",
+        "description": (
+            "Processes any file that the user has uploaded or dropped onto the interface. "
+            "Use this when the user refers to an uploaded file and wants an action on it. "
+            "Supports: images (describe/ocr/resize/compress/convert), "
+            "PDFs (summarize/extract_text/to_word), "
+            "Word docs & text files (summarize/fix/reformat/translate), "
+            "CSV/Excel (analyze/stats/filter/sort/convert), "
+            "JSON/XML (validate/format/analyze), "
+            "code files (explain/review/fix/optimize/run/document/test), "
+            "audio (transcribe/trim/convert/info), "
+            "video (trim/extract_audio/extract_frame/compress/transcribe/info), "
+            "archives (list/extract), "
+            "presentations (summarize/extract_text). "
+            "ALWAYS call this tool when a file has been uploaded and the user gives a command about it. "
+            "If the user's command is ambiguous, pick the most logical action for that file type."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "file_path": {
+                    "type": "STRING",
+                    "description": "Full path to the uploaded file. Leave empty to use the currently uploaded file."
+                },
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "What to do with the file. Examples by type:\n"
+                        "image: describe | ocr | resize | compress | convert | info\n"
+                        "pdf: summarize | extract_text | to_word | info\n"
+                        "docx/txt: summarize | fix | reformat | translate_hint | word_count | to_bullet\n"
+                        "csv/excel: analyze | stats | filter | sort | convert | info\n"
+                        "json: validate | format | analyze | to_csv\n"
+                        "code: explain | review | fix | optimize | run | document | test\n"
+                        "audio: transcribe | trim | convert | info\n"
+                        "video: trim | extract_audio | extract_frame | compress | transcribe | info | convert\n"
+                        "archive: list | extract\n"
+                        "pptx: summarize | extract_text | analyze"
+                    )
+                },
+                "instruction": {
+                    "type": "STRING",
+                    "description": "Free-form instruction if action doesn't cover it. E.g. 'translate this to Turkish', 'find all email addresses'"
+                },
+                "format": {
+                    "type": "STRING",
+                    "description": "Target format for conversion. E.g. 'mp3', 'pdf', 'csv', 'png'"
+                },
+                "width":     {"type": "INTEGER", "description": "Target width for image resize"},
+                "height":    {"type": "INTEGER", "description": "Target height for image resize"},
+                "scale":     {"type": "NUMBER",  "description": "Scale factor for image resize (e.g. 0.5)"},
+                "quality":   {"type": "INTEGER", "description": "Quality 1-100 for image/video compress"},
+                "start":     {"type": "STRING",  "description": "Start time for trim: seconds or HH:MM:SS"},
+                "end":       {"type": "STRING",  "description": "End time for trim: seconds or HH:MM:SS"},
+                "timestamp": {"type": "STRING",  "description": "Timestamp for video frame extraction HH:MM:SS"},
+                "column":    {"type": "STRING",  "description": "Column name for CSV filter/sort"},
+                "value":     {"type": "STRING",  "description": "Filter value for CSV filter"},
+                "condition": {"type": "STRING",  "description": "Filter condition: equals|contains|gt|lt"},
+                "ascending": {"type": "BOOLEAN", "description": "Sort order for CSV sort (default: true)"},
+                "save":      {"type": "BOOLEAN", "description": "Save result to file (default: true)"},
+                "destination": {"type": "STRING", "description": "Output folder for archive extract"},
             },
-            "action": {
-                "type": "STRING",
-                "description": (
-                    "What to do with the file. Examples by type:\n"
-                    "image: describe | ocr | resize | compress | convert | info\n"
-                    "pdf: summarize | extract_text | to_word | info\n"
-                    "docx/txt: summarize | fix | reformat | translate_hint | word_count | to_bullet\n"
-                    "csv/excel: analyze | stats | filter | sort | convert | info\n"
-                    "json: validate | format | analyze | to_csv\n"
-                    "code: explain | review | fix | optimize | run | document | test\n"
-                    "audio: transcribe | trim | convert | info\n"
-                    "video: trim | extract_audio | extract_frame | compress | transcribe | info | convert\n"
-                    "archive: list | extract\n"
-                    "pptx: summarize | extract_text | analyze"
-                )
-            },
-            "instruction": {
-                "type": "STRING",
-                "description": "Free-form instruction if action doesn't cover it. E.g. 'translate this to Turkish', 'find all email addresses'"
-            },
-            "format": {
-                "type": "STRING",
-                "description": "Target format for conversion. E.g. 'mp3', 'pdf', 'csv', 'png'"
-            },
-            "width":     {"type": "INTEGER", "description": "Target width for image resize"},
-            "height":    {"type": "INTEGER", "description": "Target height for image resize"},
-            "scale":     {"type": "NUMBER",  "description": "Scale factor for image resize (e.g. 0.5)"},
-            "quality":   {"type": "INTEGER", "description": "Quality 1-100 for image/video compress"},
-            "start":     {"type": "STRING",  "description": "Start time for trim: seconds or HH:MM:SS"},
-            "end":       {"type": "STRING",  "description": "End time for trim: seconds or HH:MM:SS"},
-            "timestamp": {"type": "STRING",  "description": "Timestamp for video frame extraction HH:MM:SS"},
-            "column":    {"type": "STRING",  "description": "Column name for CSV filter/sort"},
-            "value":     {"type": "STRING",  "description": "Filter value for CSV filter"},
-            "condition": {"type": "STRING",  "description": "Filter condition: equals|contains|gt|lt"},
-            "ascending": {"type": "BOOLEAN", "description": "Sort order for CSV sort (default: true)"},
-            "save":      {"type": "BOOLEAN", "description": "Save result to file (default: true)"},
-            "destination": {"type": "STRING", "description": "Output folder for archive extract"},
-        },
-        "required": []
-    }
-},
+            "required": []
+        }
+    },
     {
-    "name": "shutdown_jarvis",
-    "description": (
-        "Shuts down the assistant completely. "
-        "Call this when the user expresses intent to end the conversation, "
-        "close the assistant, say goodbye, or stop Jarvis. "
-        "The user can say this in ANY language."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {},
-    }
+        "name": "shutdown_orion",
+        "description": (
+            "Shuts down the assistant completely. "
+            "Call this when the user expresses intent to end the conversation, "
+            "close the assistant, say goodbye, or stop Orion. "
+            "The user can say this in ANY language."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {},
+        }
     },
     {
         "name": "save_memory",
@@ -489,6 +520,17 @@ TOOL_DECLARATIONS = [
             "required": ["category", "key", "value"]
         }
     },
+    {
+        "name": "get_stock_analysis",
+        "description": "Fetches real-time price, financial metrics, analyst recommendations, and top news for a stock ticker using yfinance.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "symbol": {"type": "STRING", "description": "Stock ticker symbol, e.g. AAPL"}
+            },
+            "required": ["symbol"]
+        }
+    },
 ]
 
 
@@ -502,16 +544,22 @@ class JarvisLive:
         self._loop          = None
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
+        self._mic_stream    = None  # Track active sounddevice stream
         self.ui.on_text_command = self._on_text_command
 
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
+            self.session.send(input=text, end_of_turn=True),
+            self._loop
+        )
+
+    def speak(self, text: str):
+        if not self._loop or not self.session:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.session.send(input=text, end_of_turn=True),
             self._loop
         )
 
@@ -523,21 +571,47 @@ class JarvisLive:
         elif not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-    def speak(self, text: str):
-        if not self._loop or not self.session:
-            return
-        asyncio.run_coroutine_threadsafe(
-            self.session.send_client_content(
-                turns={"parts": [{"text": text}]},
-                turn_complete=True
-            ),
-            self._loop
-        )
-
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
+
+    async def _monitor_job_queue(self):
+        """Monitors the IPC file, forces the UI to wake up, and prompts the user."""
+        last_announced_job = None
+        from job_bridge import bridge
+        
+        while True:
+            await asyncio.sleep(1)
+            pending = bridge.get_pending_job()
+            
+            if pending and pending.get("job_key") != last_announced_job:
+                last_announced_job = pending.get("job_key")
+                company = pending.get("company", "a company")
+                title = pending.get("title", "a role")
+                
+                # --- AUTOMATIC WAKE-UP SEQUENCE ---
+                print(f"[ORION] 📢 Job received for {company}! Forcing UI wake-up...")
+                
+                # Trigger the UI to pop up from the background
+                if hasattr(self, 'ui'):
+                    if hasattr(self.ui, 'bring_to_front'):
+                        try:
+                            self.ui.bring_to_front()
+                        except Exception:
+                            pass
+                    elif hasattr(self.ui, 'show'):
+                        try:
+                            self.ui.show()
+                        except Exception:
+                            pass
+                # ----------------------------------
+                
+                prompt_msg = (
+                    f"[SYSTEM_NOTIFICATION] Sir, the job application for '{title}' at '{company}' "
+                    f"has been compiled and is ready on screen. Ask the user out loud if they want to submit or skip it."
+                )
+                self.speak(prompt_msg)
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -579,7 +653,7 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[ORION] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
         if name == "save_memory":
             category = args.get("category", "notes")
@@ -611,6 +685,41 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
+            elif name == "confirm_job_application":
+                from job_bridge import bridge
+                import os
+                import webbrowser
+                import subprocess
+
+                action = args.get("action", "").lower()
+
+                if action in ["approve", "yes", "send", "submit"]:
+                    job = bridge.get_pending_job()
+                    if job:
+                        apply_url = job.get("apply_url", "").strip()
+
+                        if not apply_url or apply_url == "N/A":
+                            query = f"{job.get('company', '')} {job.get('title', '')} careers application"
+                            apply_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
+
+                        # 1. Open the job posting in your default web browser
+                        webbrowser.open(apply_url)
+
+                        # 2. Open Pop!_OS file manager directly to the output folder containing your PDFs
+                        output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
+                        if os.path.exists(output_dir):
+                            subprocess.Popen(['xdg-open', output_dir])
+
+                        # 3. Resolve the bridge so your pipeline logs it and proceeds
+                        bridge.resolve_approval(True)
+                        result = f"Confirmed. I have opened the application page for {job.get('company')} in your browser and opened your PDF output folder. You can complete the form using Simplify."
+                    else:
+                        result = "No pending job application found to approve, sir."
+
+                else:
+                    bridge.resolve_approval(False)
+                    result = "Skipped application as requested, sir."
+
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
                 result = r or "Done."
@@ -634,7 +743,6 @@ class JarvisLive:
                     lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
                 )
                 result = r or "Done."
-
 
             elif name == "screen_process":
                 threading.Thread(
@@ -676,14 +784,19 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
-            elif name == "game_updater":
-                r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
-
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
-            elif name == "shutdown_jarvis":
+            elif name == "get_stock_analysis":
+                # Keep the import here so it only loads if the tool is requested
+                from actions.stock_actions import get_stock_analysis
+
+                symbol = args.get("symbol", "")
+                print(f"📊 [ANUBIS] Fetching live stock data for {symbol}...")
+
+                r = await loop.run_in_executor(None, lambda: get_stock_analysis(symbol))
+                result = r or f"No data returned for {symbol}."
+            elif name == "shutdown_orion":
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
 
@@ -704,7 +817,7 @@ class JarvisLive:
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        print(f"[ORION] 📤 {name} → {str(result)[:80]}")
 
         return types.FunctionResponse(
             id=fc.id, name=name,
@@ -714,39 +827,73 @@ class JarvisLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+            await self.session.send_realtime_input(
+                audio=types.Blob(
+                    data=msg["data"],
+                    mime_type="audio/pcm"
+                )
+            )
 
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print("[ORION] 🎤 Mic task ready.")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted:
-                data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
+                orion_speaking = self._is_speaking
 
-        try:
-            with sd.InputStream(
-                samplerate=SEND_SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=CHUNK_SIZE,
-                callback=callback,
-            ):
-                print("[JARVIS] 🎤 Mic stream open")
-                while True:
-                    await asyncio.sleep(0.1)
-        except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
-            raise
+            ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else True
+
+            if not orion_speaking and not self.ui.muted and ui_visible:
+                data = indata.tobytes()
+                try:
+                    loop.call_soon_threadsafe(
+                        self.out_queue.put_nowait,
+                        {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
+                    )
+                except asyncio.QueueFull:
+                    pass
+
+        while True:
+            ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else False
+            
+            # Open mic stream ONLY when UI is visible
+            if ui_visible and self._mic_stream is None:
+                try:
+                    self._mic_stream = sd.InputStream(
+                        samplerate=SEND_SAMPLE_RATE,
+                        channels=CHANNELS,
+                        dtype="int16",
+                        blocksize=CHUNK_SIZE,
+                        callback=callback,
+                    )
+                    self._mic_stream.start()
+                    print("[ORION] 🎤 Mic stream OPEN for conversation.")
+                except Exception as e:
+                    print(f"[ORION] ❌ Failed to open mic: {e}")
+            
+            # Close mic stream asynchronously when UI is hidden to free hardware
+            elif not ui_visible and self._mic_stream is not None:
+                try:
+                    stream_to_close = self._mic_stream
+                    self._mic_stream = None
+                    
+                    def _async_close(s):
+                        try:
+                            s.stop()
+                            s.close()
+                            print("[ORION] 🔒 Mic stream CLOSED asynchronously.")
+                        except Exception as e:
+                            print(f"[ORION] ⚠️ Error closing mic: {e}")
+
+                    threading.Thread(target=_async_close, args=(stream_to_close,), daemon=True).start()
+                except Exception as e:
+                    print(f"[ORION] ⚠️ Mic close error: {e}")
+
+            await asyncio.sleep(0.2)
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[ORION] 👂 Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -771,7 +918,9 @@ class JarvisLive:
                                 in_buf.append(txt)
 
                         if sc.turn_complete:
-                            self.set_speaking(False)
+                            # Only turn the mic back on if the audio queue is already empty
+                            if self.audio_in_queue.empty():
+                                self.set_speaking(False)
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
@@ -780,8 +929,12 @@ class JarvisLive:
 
                             full_out = " ".join(out_buf).strip()
                             if full_out:
-                                self.ui.write_log(f"Jarvis: {full_out}")
+                                self.ui.write_log(f"Orion: {full_out}")
                             out_buf = []
+
+                            if hasattr(self.ui, 'listener') and self.ui.listener and not self.ui.listener.running:
+                                self.ui.listener.start()
+                                print("🐺 [ANUBIS]: Wake-word listener resumed.")
 
                             if full_in and len(full_in) > 5:
                                 threading.Thread(
@@ -793,7 +946,7 @@ class JarvisLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
+                            print(f"[ORION] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
@@ -801,33 +954,39 @@ class JarvisLive:
                         )
 
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[ORION] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        print("[ORION] 🔊 Play started")
         loop = asyncio.get_event_loop()
 
-        stream = sd.RawOutputStream(
-            samplerate=RECEIVE_SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=CHUNK_SIZE,
-        )
-        stream.start()
         try:
-            while True:
-                chunk = await self.audio_in_queue.get()
-                self.set_speaking(True)
-                await asyncio.to_thread(stream.write, chunk)
+            stream = sd.RawOutputStream(
+                samplerate=RECEIVE_SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SIZE,
+            )
+            stream.start()
+            try:
+                while True:
+                    chunk = await self.audio_in_queue.get()
+                    self.set_speaking(True)
+                    await asyncio.to_thread(stream.write, chunk)
+                    
+                    # Once the last chunk is sent to the speaker, safely unmute the mic
+                    if self.audio_in_queue.empty():
+                        self.set_speaking(False)
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                self.set_speaking(False)
+                stream.stop()
+                stream.close()
         except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
-            raise
-        finally:
-            self.set_speaking(False)
-            stream.stop()
-            stream.close()
+            print(f"[ORION] ❌ Play stream error: {e}")
 
     async def run(self):
         client = genai.Client(
@@ -837,51 +996,73 @@ class JarvisLive:
 
         while True:
             try:
-                print("[JARVIS] 🔌 Connecting...")
+                print("[ORION] 🔌 Connecting...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
+                model_name = LIVE_MODEL.replace("models/", "")
 
                 async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
+                    client.aio.live.connect(model=model_name, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session        = session
                     self._loop          = asyncio.get_event_loop()
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=10)
+                    self.out_queue      = asyncio.Queue(maxsize=50)
 
-                    print("[JARVIS] ✅ Connected.")
+                    print("[ORION] ✅ Connected.")
                     self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                    self.ui.write_log("SYS: ORION online.")
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
+                    tg.create_task(self._monitor_job_queue())
                     
             except Exception as e:
-                print(f"[JARVIS] ⚠️ {e}")
+                print(f"[ORION] ⚠️ {e}")
                 traceback.print_exc()
 
             self.set_speaking(False)
             self.ui.set_state("THINKING")
-            print("[JARVIS] 🔄 Reconnecting in 3s...")
+            print("[ORION] 🔄 Reconnecting in 3s...")
             await asyncio.sleep(3)
 
-def main():
-    ui = JarvisUI("face.png")
+def main(minimized: bool = False):
+    global ui_instance
+
+    ui = JarvisUI("face.png", minimized=minimized)
+    ui_instance = ui
+
+    # --- START VOICE LISTENER ---
+    listener = WakeWordListener(callback=on_wake_word_detected, model_path="orion.onnx")
+    ui.listener = listener
+    listener.start()
+    # ------------------------------
+
+    signal.signal(signal.SIGUSR1, wake_from_signal)
 
     def runner():
         ui.wait_for_api_key()
-        jarvis = JarvisLive(ui)
+        orion = JarvisLive(ui)
         try:
-            asyncio.run(jarvis.run())
+            asyncio.run(orion.run())
         except KeyboardInterrupt:
             print("\n🔴 Shutting down...")
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()
 
-
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Anubis Voice Assistant")
+    parser.add_argument(
+        "--minimized",
+        action="store_true",
+        help="Start hidden in system tray/background",
+    )
+    args, _ = parser.parse_known_args()
+
+    main(minimized=args.minimized)
