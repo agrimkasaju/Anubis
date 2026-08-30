@@ -37,6 +37,8 @@ class FakeWebsocket:
         return None
 
 
+from core.live_response_guard import live_response_guard
+
 @pytest.mark.asyncio
 async def test_receive_skips_malformed_server_payloads():
     session = live_module.AsyncSession(
@@ -48,9 +50,8 @@ async def test_receive_skips_malformed_server_payloads():
     )
 
     messages = []
-    async for message in session.receive():
+    async for message in live_response_guard(session):
         messages.append(message)
 
-    assert len(messages) == 2
-    assert messages[0].text is None
-    assert messages[1].text == "ok"
+    assert len(messages) == 1
+    assert messages[0].server_content.model_turn.parts[0].text == "ok"

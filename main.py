@@ -895,10 +895,11 @@ class JarvisLive:
     async def _receive_audio(self):
         print("[ORION] 👂 Recv started")
         out_buf, in_buf = [], []
+        from core.live_response_guard import live_response_guard
 
         try:
             while True:
-                async for response in self.session.receive():
+                async for response in live_response_guard(self.session):
 
                     if response.data:
                         self.audio_in_queue.put_nowait(response.data)

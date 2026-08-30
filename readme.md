@@ -1,82 +1,72 @@
-# 🤖 MARK XXXIX-OR (39)
-### The Ultimate Cross-Platform Personal AI Assistant — By FatihMakes
+# 🤖 O.R.I.O.N MARK I
+### The Ultimate AI Job Search & Personal Assistant
 
-> 📺 **[Watch the full setup video on YouTube](https://youtu.be/ldvDNzwnM8k)**
-
-A real-time voice AI that can hear, see, understand, and control your computer — on any OS. Supporting Windows, macOS, and Linux. Local execution. Zero subscriptions. Engineered for total autonomy.
+O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous job application workflows and system control. It automatically fetches job listings, generates tailored resumes/cover letters, and manages the submission process with human-in-the-loop confirmation.
 
 ---
 
-## ✨ Overview
+## 🚀 Key Features
 
-MARK XXXIX-OR represents the pinnacle of the Jarvis series, evolving into a more flexible and robust system. It bridges the gap between the operating system and human intent. Through natural dialogue, Mark 39 analyzes your screen, processes uploaded documents, and executes complex workflows with a brand-new, adaptive interface.
-
-It's not just an assistant — it's an extension of your digital life.
-
----
-
-## 🚀 Capabilities
-
-### Core Features
-| Feature | Description |
-|---|---|
-| 🎙️ Real-time Voice | Ultra-low latency conversation in any language |
-| 🖥️ System Control | Launch apps, manage files, execute terminal commands |
-| 🧩 Autonomous Tasks | High-level planning for complex, multi-step goals |
-| 👁️ Visual Awareness | Real-time screen processing and webcam vision |
-| 🧠 Persistent Memory | Deeply remembers your projects, preferences, and personal context |
-| ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
+- **💼 Job Pipeline** — Automatically fetches jobs from GitHub repositories or URLs. Generates professional PDFs (Resume/Cover Letter) tailored to each role.
+- **🎙️ Real-time Voice** — Low-latency interaction using Gemini Live for natural conversation.
+- **🖥️ System Control** — Full control over apps, files, browser, and desktop settings.
+- **👁️ Visual Awareness** — Real-time screen analysis and webcam vision.
+- **🧠 Persistent Memory** — Deeply remembers your projects, preferences, and career goals.
+- **🛡️ Live Response Guard** — Robust handling of malformed AI responses to ensure zero-crash sessions.
 
 ---
 
-## 🆕 What's New in XXXIX-OR
+## 🛠️ Setup
 
-- 📂 **Advanced File Handling** — New support for direct file uploads. Drop PDFs, source code, or images into the assistant to have them analyzed, summarized, or edited instantly.
-- 🎨 **Adaptive & Flexible UI** — A complete overhaul of the interface. The new UI is fully resizable and responsive, featuring transparency controls and customizable layouts to fit your workspace perfectly.
-- 🐧🍎 **Refined Cross-Platform Stability** — Major fixes for macOS and Linux compatibility. Core system actions are now more consistent across all three major operating systems.
-- ⚡ **Optimized Core Engine** — Significant performance boost in tool-calling logic and response generation, resulting in a 40% faster interaction speed.
-- 🔀 **OpenRouter Integration** — Selected action modules (web search, memory, flight finder, desktop control, and more) now route their LLM calls through OpenRouter's free-tier models. This significantly increases the effective request limit without any additional cost, while Gemini Live continues to handle real-time voice and tool-calling.
+1. **Clone the repo:**
+   ```bash
+   git clone https://github.com/agrimkasaju/Anubis.git
+   cd Anubis
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   playwright install
+   ```
+
+3. **Configure API Keys:**
+   Add your keys to `config/api_keys.json`:
+   ```json
+   {
+     "gemini_api_key": "YOUR_GEMINI_KEY",
+     "openrouter_api_key": "YOUR_OPENROUTER_KEY"
+   }
+   ```
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Workflow
 
+1. **Start the Assistant:**
+   ```bash
+   python main.py
+   ```
+2. **Job Application:**
+   - The pipeline fetches jobs and places them in the queue.
+   - Orion (the assistant) will automatically wake up and announce: *"Sir, a new job for [Role] at [Company] is ready."*
+   - You can say: *"Yes, show it to me"* or *"Submit it"*.
+   - Orion opens the application page, your generated PDFs, and helps you finish the form.
+
+---
+
+## 🧪 Testing
+
+Run the automated capability test to verify the job bridge and response guard:
 ```bash
-git clone https://github.com/FatihMakes/Mark-XXXIX-OR.git
-cd Mark-XXXIX-OR
-pip install -r requirements.txt
-playwright install
-python main.py
+# Test the live response guard
+pytest tests/test_live_response_guard.py
+
+# Test the job pipeline capability
+python tests/agent_capability_test.py
 ```
 
-> ⚠️ **Installation Note:** To keep the repository lightweight, some OS-specific dependencies are not bundled in `requirements.txt`. If you run into a `ModuleNotFoundError`, simply install the missing package via `pip install <module_name>` for your specific system.
-
 ---
 
-## 📋 Requirements
-
-| Requirement | Details |
-|---|---|
-| **OS** | Windows 10/11, macOS, or Linux |
-| **Python** | 3.11 or 3.12 |
-| **Microphone** | Required for voice interaction |
-| **API Keys** | Free Gemini API key + Free OpenRouter API key |
-
----
-
-## ⚠️ License
-
-Personal and non-commercial use only.
-Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)**.
-
----
-
-## 👤 Connect with the Creator
-
-Engineered by a developer building a real-world JARVIS-style assistant.
-⭐ **Star the repository to support the journey to Mark 100.**
-
-| Platform | Link |
-|---|---|
-| YouTube | [@FatihMakes](https://www.youtube.com/@FatihMakes) |
-| Instagram | [@fatihmakes](https://www.instagram.com/fatihmakes) |
+## 👤 Connect
+Engineered by **agrimkasaju**.
