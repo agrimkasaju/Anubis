@@ -80,21 +80,22 @@ def volume_mute():
 def volume_set(value: int):
     value = max(0, min(100, int(value)))
     if _OS == "Windows":
-        try:
-            import math
-            from ctypes import cast, POINTER
-            from comtypes import CLSCTX_ALL
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-            devices   = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            vol       = cast(interface, POINTER(IAudioEndpointVolume))
-            vol_db    = -65.25 if value == 0 else max(-65.25, 20 * math.log10(value / 100))
-            vol.SetMasterVolumeLevel(vol_db, None)
-            return
-        except Exception as e:
-            print(f"[Settings] pycaw failed, using keypress fallback: {e}")
-            pyautogui.press("volumemute")
-            pyautogui.press("volumemute")
+        # try:
+        #     import math
+        #     from ctypes import cast, POINTER
+        #     from comtypes import CLSCTX_ALL
+        #     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        #     devices   = AudioUtilities.GetSpeakers()
+        #     interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        #     vol       = cast(interface, POINTER(IAudioEndpointVolume))
+        #     vol_db    = -65.25 if value == 0 else max(-65.25, 20 * math.log10(value / 100))
+        #     vol.SetMasterVolumeLevel(vol_db, None)
+        #     return
+        # except Exception as e:
+        #     print(f"[Settings] pycaw failed, using keypress fallback: {e}")
+        #     pyautogui.press("volumemute")
+        #     pyautogui.press("volumemute")
+        pass
     elif _OS == "Darwin":
         subprocess.run(["osascript", "-e", f"set volume output volume {value}"],
             capture_output=True)

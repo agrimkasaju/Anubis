@@ -1,7 +1,20 @@
 #web_search.py
+import urllib.parse
+import webbrowser
 import json
 import sys
 from pathlib import Path
+
+import re
+from datetime import datetime
+
+current_date = datetime.now().strftime("%B %Y")
+
+system_prompt = (
+    f"You are a web search summarizer. The current date is {current_date}. "
+    "Do NOT claim dates in 2026 are in the future. Analyze the provided search results and summarize them directly. "
+    "CRITICAL: DO NOT use <think> tags. Do not explain your reasoning. Output ONLY the final summary."
+)
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -23,7 +36,7 @@ def _gemini_search(query: str) -> str:
 
     client   = genai.Client(api_key=_get_api_key())
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=get_gemini_model(),
         contents=query,
         config={"tools": [{"google_search": {}}]},
     )
@@ -116,22 +129,56 @@ def web_search(
         player.write_log(f"[Search] {query or ', '.join(items)}")
 
     print(f"[WebSearch] 🔍 Query: {query!r}  Mode: {mode}")
-# replace: result = _gemini_search(query) block with:
+
+    # 1. Open search visually in Vivaldi/browser
+    try:
+        search_url = f"https://duckduckgo.com/?q={urllib.parse.quote(query)}"
+        import shutil
+        import subprocess
+        vivaldi_bin = shutil.which("vivaldi") or shutil.which("vivaldi-stable") or "/usr/bin/vivaldi"
+        
+        if vivaldi_bin and Path(vivaldi_bin).exists():
+            subprocess.Popen([vivaldi_bin, search_url])
+            print(f"[WebSearch] 🌐 Native subprocess spawned Vivaldi tab for: {query}")
+        else:
+            webbrowser.open_new_tab(search_url)
+            print(f"[WebSearch] 🌐 Fallback browser tab opened for: {query}")
+    except Exception as e:
+        print(f"[WebSearch] ⚠️ Failed to open custom browser context: {e}")
+
+    # 2. Scrape live DuckDuckGo results first
+    search_snippets = ""
+    try:
+        results = _ddg_search(query, max_results=5)
+        search_snippets = _format_ddg(query, results)
+        print(f"[WebSearch] 📡 Scraped {len(results)} live search snippets.")
+    except Exception as e:
+        print(f"[WebSearch] ⚠️ DDG search failed: {e}")
+
+    # 3. Summarize the actual search results with OpenRouter
+    current_date_str = datetime.now().strftime("%B %d, %Y")
+    system_prompt = (
+        f"You are a real-time web search summarizer. Today's date is {current_date_str}. "
+        "Summarize the answer clearly and concisely based STRICTLY on the provided search results. "
+        "DO NOT use <think> tags. Output only the concise answer."
+    )
+
+    prompt = (
+        f"User Query: {query}\n\n"
+        f"Live Web Search Results:\n{search_snippets if search_snippets else 'No search snippets retrieved.'}\n\n"
+        "Provide a concise summary answering the user query:"
+    )
+
     try:
         from or_client import client
         result = client.chat(
-            query,
-            system="You are a web search assistant. Answer factually and concisely."
+            prompt,
+            system=system_prompt
         )
-        print("[WebSearch] ✅ OpenRouter OK.")
-        return result
+        # Strip out any rogue <think>...</think> tags
+        clean_result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+        print("[WebSearch] ✅ Summarized live web search successfully.")
+        return clean_result or result
     except Exception as e:
-        print(f"[WebSearch] ⚠️ OpenRouter failed ({e}) — trying DDG...")
-        results = _ddg_search(query)
-        result  = _format_ddg(query, results)
-        print(f"[WebSearch] ✅ DDG: {len(results)} result(s).")
-        return result
-    
-    except Exception as e:
-        print(f"[WebSearch] ❌ All backends failed: {e}")
-        return f"Search failed, sir: {e}"
+        print(f"[WebSearch] ⚠️ OpenRouter summarizer failed ({e}) — returning raw snippets...")
+        return search_snippets or "Sir, I was unable to retrieve live web results at this moment."

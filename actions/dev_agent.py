@@ -5,6 +5,8 @@ import re
 import time
 from pathlib import Path
 
+from config import get_gemini_model
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -16,8 +18,8 @@ BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
-MODEL_PLANNER    = "gemini-2.5-flash"
-MODEL_WRITER     = "gemini-2.5-flash"
+MODEL_PLANNER    = get_gemini_model()
+MODEL_WRITER     = get_gemini_model()
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:

@@ -18,6 +18,8 @@ import re
 import time
 from pathlib import Path
 
+from config import get_gemini_model
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -28,7 +30,7 @@ BASE_DIR           = get_base_dir()
 API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
-GEMINI_MODEL       = "gemini-2.5-flash"
+GEMINI_MODEL       = get_gemini_model()
 
 
 def _get_api_key() -> str:
@@ -486,8 +488,10 @@ Be specific and actionable. If you see an error message, quote it exactly."""
             analysis_prompt,
         ]
 
+        from config import get_gemini_model
+
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=get_gemini_model(),
             contents=contents,
         )
 

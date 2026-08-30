@@ -14,6 +14,8 @@ import sounddevice as sd
 import numpy as np
 from pathlib import Path
 
+from config import get_gemini_live_model
+
 try:
     import PIL.Image
     _PIL_OK = True
@@ -31,7 +33,7 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL          = get_gemini_live_model()
 CHANNELS            = 1
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
@@ -118,9 +120,13 @@ def _to_jpeg(img_bytes: bytes) -> bytes:
 
 def _capture_screenshot() -> bytes:
     with mss.mss() as sct:
-        shot      = sct.grab(sct.monitors[1])
-        png_bytes = mss.tools.to_png(shot.rgb, shot.size)
-    return _to_jpeg(png_bytes)
+        shot = sct.grab(sct.monitors[1])
+        # Use JPEG bytes format
+        img = PIL.Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        buf = io.BytesIO()
+        img.thumbnail([IMG_MAX_W, IMG_MAX_H], PIL.Image.BILINEAR)
+        img.save(buf, format="JPEG", quality=JPEG_Q)
+        return buf.getvalue()
 
 
 def _capture_camera() -> bytes:
@@ -222,17 +228,19 @@ class _LiveSession:
             if self._session:
                 image_bytes, mime_type, user_text = item
                 try:
-                    b64 = base64.b64encode(image_bytes).decode("utf-8")
-                    await self._session.send_client_content(
-                        turns={
-                            "parts": [
-                                {"inline_data": {"mime_type": mime_type, "data": b64}},
-                                {"text": user_text}
-                            ]
-                        },
-                        turn_complete=True
+                    # Use video= instead of media= to avoid the deprecated media_chunks error
+                    await self._session.send_realtime_input(
+                        video=types.Blob(
+                            data=image_bytes,
+                            mime_type=mime_type
+                        )
                     )
-                    print("[ScreenProcess] ✅ Image sent")
+                    
+                    # Send accompanying user text prompt
+                    if user_text:
+                        await self._session.send_realtime_input(text=user_text)
+
+                    print("[ScreenProcess] ✅ Image sent via realtime stream")
                 except Exception as e:
                     print(f"[ScreenProcess] ⚠️ Send error: {e}")
 

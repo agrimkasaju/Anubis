@@ -188,48 +188,56 @@ class _BrowserThread:
 
     async def _launch_browser_if_needed(self):
         """
-        Tarayıcıyı başlatır. Zaten açıksa hiçbir şey yapmaz.
-        Her zaman default tarayıcıyı kullanır, özel sekme açmaz.
+        Launches the browser. If already open, does nothing.
+        Guarantees Vivaldi execution on Linux and prevents Chromium fallbacks.
         """
         if self._browser and self._browser.is_connected():
             return
 
         prog_id = _get_default_browser_id()
-        self._engine_name, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
+        self._engine_name = "chromium"
+        
+        # Enforce Vivaldi paths for native Linux installation or Flatpak environments
+        if platform.system() == "Linux":
+            candidate_paths = [
+                shutil.which("vivaldi"),
+                shutil.which("vivaldi-stable"),
+                "/usr/bin/vivaldi",
+                "/usr/bin/vivaldi-stable",
+                "/opt/vivaldi/vivaldi",
+                "/var/lib/flatpak/app/com.vivaldi.Vivaldi/current/active/export/bin/com.vivaldi.Vivaldi"
+            ]
+            self._exe_path = next((p for p in candidate_paths if p and Path(p).exists()), None)
+            print(f"[Browser] 🔍 Forcing Vivaldi path on Linux: {self._exe_path}")
+        else:
+            _, self._exe_path, self._channel, self._is_opera = _find_browser_executable(prog_id)
+
         engine = getattr(self._playwright, self._engine_name)
 
-        # Temel chromium argümanları
-        chromium_args = ["--start-maximized"]
-
-        if self._is_opera:
-            # Opera GX bazı sürümlerde varsayılan olarak private modda başlar.
-            # Aşağıdaki flag'ler bunu engeller.
-            chromium_args += [
-                "--disable-features=OperaPrivacyMode",
-                "--no-private",
-            ]
-            print("[Browser] 🎭 Opera detected — disabling private-mode flags")
+        # Chromium parameters optimized to prevent Vivaldi UI freezes
+        chromium_args = [
+            "--start-maximized",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-blink-features=AutomationControlled",
+        ]
 
         launch_kwargs = {"headless": False}
         if self._engine_name == "chromium":
             launch_kwargs["args"] = chromium_args
         if self._exe_path:
             launch_kwargs["executable_path"] = self._exe_path
-        elif self._channel:
-            launch_kwargs["channel"] = self._channel
 
         try:
             self._browser = await engine.launch(**launch_kwargs)
-            print(
-                f"[Browser] ✅ Launched ({self._engine_name}"
-                f"{' / ' + self._channel if self._channel else ''}"
-                f"{' / ' + self._exe_path if self._exe_path else ''})"
-            )
+            print(f"[Browser] ✅ Successfully Launched Vivaldi: {self._exe_path}")
         except Exception as e:
-            print(f"[Browser] ⚠️ Launch failed ({e}), falling back to built-in Chromium")
+            print(f"[Browser] ⚠️ Launch warning ({e}). Re-attempting direct binary fallback.")
+            # If the custom context configuration fails, enforce direct execution without extra args
             self._browser = await self._playwright.chromium.launch(
                 headless=False,
-                args=["--start-maximized"]
+                executable_path=self._exe_path if self._exe_path else None,
+                args=["--start-maximized", "--no-sandbox"]
             )
 
     async def _get_page(self):
@@ -244,7 +252,7 @@ class _BrowserThread:
 
         if self._context is None:
             self._context = await self._browser.new_context(
-                viewport=None,
+                no_viewport=True,  # <--- Change this from viewport=None
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -254,6 +262,10 @@ class _BrowserThread:
 
         if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
+            
+            await self._page.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
 
         return self._page
 
@@ -271,13 +283,14 @@ class _BrowserThread:
         except Exception as e:
             return f"Navigation error: {e}"
 
-    async def _search(self, query: str, engine: str = "google") -> str:
+    async def _search(self, query: str, engine: str = "duckduckgo") -> str:
         engines = {
             "google":     f"https://www.google.com/search?q={query.replace(' ', '+')}",
             "bing":       f"https://www.bing.com/search?q={query.replace(' ', '+')}",
             "duckduckgo": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
         }
-        url = engines.get(engine.lower(), engines["google"])
+        # Fallback to duckduckgo if an unknown engine is passed
+        url = engines.get(engine.lower(), engines["duckduckgo"])
         return await self._go_to(url)
 
     async def _click(self, selector=None, text=None) -> str:
@@ -462,7 +475,7 @@ def browser_control(
         elif action == "search":
             result = _bt.run(_bt._search(
                 parameters.get("query", ""),
-                parameters.get("engine", "google"),
+                parameters.get("engine", "duckduckgo"),
             ))
 
         elif action == "click":
