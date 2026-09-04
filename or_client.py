@@ -31,8 +31,8 @@ def _load_api_key() -> str:
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
 FALLBACK_MODEL = "openai/gpt-oss-120b"
 
-class OpenRouterClient:
-    """Ultra-fast Groq client replacing rate-limited API calls."""
+class GroqClient:
+    """Small wrapper around Groq-hosted text models."""
 
     def __init__(self) -> None:
         self.api_key = _load_api_key()
@@ -104,21 +104,21 @@ class OpenRouterClient:
             return ""
 
     def vision(self, *args, **kwargs) -> str:
-        return "Vision request processed."
+        raise NotImplementedError("Vision is not configured for the Groq client; use screen_process.")
 
     def vision_from_file(self, *args, **kwargs) -> str:
-        return "Vision request processed."
+        raise NotImplementedError("Vision is not configured for the Groq client; use screen_process.")
 
     def available_models(self) -> dict:
         return {
             "text_models": [DEFAULT_MODEL],
-            "vision_models": [DEFAULT_MODEL],
+            "vision_models": [],
             "rate_limited": [],
             "total_text": 1,
-            "total_vision": 1,
+            "total_vision": 0,
         }
 
-client = OpenRouterClient()
+client = GroqClient()
 
 if __name__ == "__main__":
     print("=" * 55)

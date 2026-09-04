@@ -33,3 +33,28 @@ def get_gemini_lite_model(default: str | None = None) -> str:
 
 def get_gemini_live_model(default: str | None = None) -> str:
     return os.getenv("GEMINI_LIVE_MODEL", default or DEFAULT_GEMINI_LIVE_MODEL)
+
+
+class GeminiModel:
+    """Minimal compatibility wrapper around the current Google Gen AI SDK."""
+
+    def __init__(self, model: str | None = None, system_instruction: str | None = None):
+        from google import genai
+
+        self._client = genai.Client(api_key=get_config()["gemini_api_key"])
+        self._model = model or get_gemini_model()
+        self._system_instruction = system_instruction
+
+    def generate_content(self, contents):
+        from google.genai import types
+
+        config = None
+        if self._system_instruction:
+            config = types.GenerateContentConfig(
+                system_instruction=self._system_instruction
+            )
+        return self._client.models.generate_content(
+            model=self._model,
+            contents=contents,
+            config=config,
+        )

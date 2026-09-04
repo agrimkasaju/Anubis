@@ -1,17 +1,7 @@
 import json
 import re
-import sys
-from pathlib import Path
 
-
-def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
-
-
-BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+from config import GeminiModel, get_gemini_lite_model, get_gemini_model
 
 
 PLANNER_PROMPT = """You are the planning module of MARK XXV, a personal AI assistant.
@@ -103,16 +93,13 @@ flight_finder
 get_stock_analysis
   symbol: string (required) — The stock ticker symbol (e.g., AAPL, NOK)
 
-code_helper
-  action: "write" | "edit" | "run" | "explain" (required)
+codex_coding
+  action: "write" | "edit" | "run" | "explain" | "review" | "build" (required)
   description: string (required)
   language: string (optional)
   output_path: string (optional)
   file_path: string (optional)
-
-dev_agent
-  description: string (required)
-  language: string (optional)
+  project_name: string (optional)
 EXAMPLES:
 
 Goal: "research mechanical engineering and save it to a notepad file"
@@ -160,19 +147,9 @@ OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 """
 
 
-def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
-
-
 def create_plan(goal: str, context: str = "") -> dict:
-    import google.generativeai as genai
-
-    from config import get_gemini_lite_model
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name=get_gemini_lite_model(),
+    model = GeminiModel(
+        model=get_gemini_lite_model(),
         system_instruction=PLANNER_PROMPT
     )
 
@@ -228,13 +205,8 @@ def _fallback_plan(goal: str) -> dict:
 
 
 def replan(goal: str, completed_steps: list, failed_step: dict, error: str) -> dict:
-    import google.generativeai as genai
-
-    from config import get_gemini_model
-
-    genai.configure(api_key=_get_api_key())
-    model = genai.GenerativeModel(
-        model_name=get_gemini_model(),
+    model = GeminiModel(
+        model=get_gemini_model(),
         system_instruction=PLANNER_PROMPT
     )
 
