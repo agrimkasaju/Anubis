@@ -28,7 +28,7 @@ def _load_api_key() -> str:
         raise RuntimeError(f"Failed to load Groq API key: {e}")
 
 # Fast open-source model hosted on Groq LPU hardware
-DEFAULT_MODEL = "qwen/qwen3.6-27b"
+DEFAULT_MODEL = "qwen/qwen3.8-27b"
 FALLBACK_MODEL = "openai/gpt-oss-120b"
 
 class OpenRouterClient:

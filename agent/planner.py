@@ -24,6 +24,7 @@ ABSOLUTE RULES:
 - Use file_controller to save content to disk.
 - Use cmd_control to open files or run system commands.
 - Max 5 steps. Use the minimum steps needed.
+- NEVER use screen_process unless the user explicitly commands you to "look at my screen", "what do you see", or "turn on camera".
 
 AVAILABLE TOOLS AND THEIR PARAMETERS:
 
@@ -70,6 +71,7 @@ computer_control
 screen_process
   text: string (required) — what to analyze or ask about the screen
   angle: "screen" | "camera" (optional)
+  IMPORTANT_NOTE: Do NOT use this tool automatically for charts, graphs, or general questions. ONLY use if explicitly commanded.
 
 send_message
   receiver: string (required)
@@ -97,6 +99,9 @@ flight_finder
   origin: string (required)
   destination: string (required)
   date: string (required)
+
+get_stock_analysis
+  symbol: string (required) — The stock ticker symbol (e.g., AAPL, NOK)
 
 code_helper
   action: "write" | "edit" | "run" | "explain" (required)
