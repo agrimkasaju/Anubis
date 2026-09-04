@@ -36,7 +36,8 @@ from actions.youtube_video     import youtube_video
 from actions.desktop           import desktop_control
 from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
-from actions.codex_coding      import codex_coding
+from actions.code_helper       import code_helper
+from actions.dev_agent         import dev_agent
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from core.wake_word import WakeWordListener
@@ -321,8 +322,8 @@ TOOL_DECLARATIONS = [
         }
     },
     {
-        "name": "codex_coding",
-        "description": "Uses sandboxed Codex to write, edit, explain, review, run, or build code inside the configured coding workspace.",
+        "name": "code_helper",
+        "description": "Writes, edits, explains, runs, or builds code files.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -333,9 +334,23 @@ TOOL_DECLARATIONS = [
                 "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
                 "code":        {"type": "STRING", "description": "Raw code string for explain"},
                 "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
-                "project_name":{"type": "STRING", "description": "Optional project subdirectory for builds"},
+                "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},
             },
             "required": ["action"]
+        }
+    },
+    {
+        "name": "dev_agent",
+        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "description":  {"type": "STRING", "description": "What the project should do"},
+                "language":     {"type": "STRING", "description": "Programming language (default: python)"},
+                "project_name": {"type": "STRING", "description": "Optional project folder name"},
+                "timeout":      {"type": "INTEGER", "description": "Run timeout in seconds (default: 30)"},
+            },
+            "required": ["description"]
         }
     },
     {
@@ -691,17 +706,9 @@ class JarvisLive:
                         webbrowser.open(apply_url)
 
                         # 2. Open Pop!_OS file manager directly to the output folder containing your PDFs
-                        configured_output = os.getenv("AI_JOB_SEARCH_OUTPUT_DIR")
-                        candidates = [
-                            BASE_DIR.parent / "ai_job_search" / "output",
-                            BASE_DIR.parent / "ai_job_search" / "ai_job_search" / "output",
-                        ]
-                        output_dir = Path(configured_output).expanduser() if configured_output else next(
-                            (path for path in candidates if path.is_dir()), candidates[0]
-                        )
-                        output_dir = output_dir.resolve()
-                        if output_dir.is_dir():
-                            subprocess.Popen(["xdg-open", str(output_dir)])
+                        output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
+                        if os.path.exists(output_dir):
+                            subprocess.Popen(['xdg-open', output_dir])
 
                         # 3. Resolve the bridge so your pipeline logs it and proceeds
                         bridge.resolve_approval(True)
@@ -754,8 +761,12 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
                 result = r or "Done."
 
-            elif name == "codex_coding":
-                r = await loop.run_in_executor(None, lambda: codex_coding(parameters=args, player=self.ui, speak=self.speak))
+            elif name == "code_helper":
+                r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
+            elif name == "dev_agent":
+                r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
             elif name == "agent_task":

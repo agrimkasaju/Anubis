@@ -24,22 +24,9 @@ O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous j
    cd Anubis
    ```
 
-2. **Create a Python 3.10 virtual environment and install dependencies:**
-
-   Linux/WSL:
+2. **Install dependencies:**
    ```bash
-   sudo apt-get install libportaudio2
-   uv venv --python 3.10
-   source .venv/bin/activate
-   uv pip install -r requirements.txt
-   playwright install
-   ```
-
-   Windows PowerShell:
-   ```powershell
-   uv venv --python 3.10
-   .venv\Scripts\Activate.ps1
-   uv pip install -r requirements.txt
+   pip install -r requirements.txt
    playwright install
    ```
 
@@ -48,18 +35,9 @@ O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous j
    ```json
    {
      "gemini_api_key": "YOUR_GEMINI_KEY",
-     "groq_api_key": "YOUR_GROQ_KEY"
+     "openrouter_api_key": "YOUR_OPENROUTER_KEY"
    }
    ```
-
-4. **Authenticate Codex and choose its workspace:**
-   ```bash
-   codex login
-   export ANUBIS_CODE_WORKSPACE="$HOME/Desktop/JarvisProjects"
-   ```
-   Coding requests are restricted to this directory. Review and explanation
-   requests are read-only; edits and builds use workspace-write access with
-   permission escalation disabled.
 
 ---
 

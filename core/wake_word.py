@@ -2,7 +2,8 @@ import os
 import time
 import threading
 import numpy as np
-import sounddevice as sd
+import pyaudio
+import openwakeword
 from openwakeword.model import Model
 
 class WakeWordListener:
@@ -18,10 +19,10 @@ class WakeWordListener:
         if os.path.exists(model_path):
             print(f"🐺 [ANUBIS]: Loaded custom wake-word model from '{model_path}'")
             # Pass the custom path directly using the internal paths parameter 
-            self.oww_model = Model(wakeword_model_paths=[os.path.abspath(model_path)])
+            self.oww_model = openwakeword.model.Model(wakeword_model_paths=[os.path.abspath(model_path)])
         else:
             print(f"🐺 [ANUBIS]: Custom model '{model_path}' not found. Loading default built-in models...")
-            self.oww_model = Model()
+            self.oww_model = openwakeword.model.Model()
 
     def start(self):
         self.running = True
@@ -71,42 +72,43 @@ class WakeWordListener:
             self.consecutive_hits = 0
 
     def _listen_loop(self):
-        chunk = 1280
-        channels = 1
-        rate = 16000
-
-        try:
-            stream = sd.InputStream(
-                samplerate=rate,
-                channels=channels,
-                dtype="int16",
-                blocksize=chunk,
+            CHUNK = 1280
+            FORMAT = pyaudio.paInt16
+            CHANNELS = 1
+            RATE = 16000
+    
+            audio = pyaudio.PyAudio()
+            stream = audio.open(
+                format=FORMAT,
+                channels=CHANNELS,
+                rate=RATE,
+                input=True,
+                frames_per_buffer=CHUNK
             )
-            stream.start()
+    
             print("🐺 [ANUBIS]: Listening for wake-word...")
-
+    
             while self.running:
-                try:
-                    data, _overflowed = stream.read(chunk)
-                except Exception:
+                if not self.active or time.time() < getattr(self, 'cooldown_until', 0.0):
                     time.sleep(0.05)
                     continue
-
-                if not self.active or time.time() < getattr(self, 'cooldown_until', 0.0):
+    
+                try:
+                    data = stream.read(CHUNK, exception_on_overflow=False)
+                except Exception:
                     continue
-
-                audio_data = np.asarray(data[:, 0], dtype=np.int16)
-
+    
+                audio_data = np.frombuffer(data, dtype=np.int16)
+    
                 # Predict wake-word presence
-                self.oww_model.predict(audio_data)
-
+                prediction = self.oww_model.predict(audio_data)
+    
                 for model_name, score in self.oww_model.prediction_buffer.items():
                     if score[-1] > 0.05:
                         print(f"🐺 [ANUBIS]: Wake-word detected! ({model_name})")
                         self.callback()
                         time.sleep(1.5)
-        except Exception as exc:
-            print(f"🐺 [ANUBIS]: Could not open wake-word microphone: {exc}")
-        finally:
-            if 'stream' in locals():
-                stream.close()
+    
+            stream.stop_stream()
+            stream.close()
+            audio.terminate()

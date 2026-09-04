@@ -1,8 +1,18 @@
 import json
 import re
+import sys
+from pathlib import Path
 from enum import Enum
 
-from config import GeminiModel, get_gemini_lite_model, get_gemini_model
+
+def get_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+
+BASE_DIR        = get_base_dir()
+API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 class ErrorDecision(Enum):
@@ -39,6 +49,11 @@ Return ONLY valid JSON:
 """
 
 
+def _get_api_key() -> str:
+    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)["gemini_api_key"]
+
+
 def analyze_error(
     step: dict,
     error: str,
@@ -63,6 +78,8 @@ def analyze_error(
             "user_message": str
         }
     """
+    import google.generativeai as genai
+
     if attempt >= max_attempts:
         print(f"[ErrorHandler] ⚠️ Max attempts reached for step {step.get('step')} — forcing replan")
         return {
@@ -73,8 +90,11 @@ def analyze_error(
             "user_message":  "Trying a different approach, sir."
         }
 
-    model = GeminiModel(
-        model=get_gemini_lite_model(),
+    from config import get_gemini_lite_model
+
+    genai.configure(api_key=_get_api_key())
+    model = genai.GenerativeModel(
+        model_name=get_gemini_lite_model(),
         system_instruction=ERROR_ANALYST_PROMPT
     )
 
@@ -130,7 +150,12 @@ def generate_fix(step: dict, error: str, fix_suggestion: str) -> dict:
 
     Returns a modified step dict.
     """
-    model = GeminiModel(get_gemini_model())
+    import google.generativeai as genai
+
+    from config import get_gemini_model
+
+    genai.configure(api_key=_get_api_key())
+    model = genai.GenerativeModel(model_name=get_gemini_model())
 
     prompt = f"""A task step failed. Generate a replacement step.
 
@@ -152,7 +177,7 @@ Return ONLY the Python code, no explanation."""
 
         return {
             "step":        step.get("step"),
-            "tool":        "codex_coding",
+            "tool":        "code_helper",
             "description": f"Auto-fix for: {step.get('description')}",
             "parameters": {
                 "action":      "run",

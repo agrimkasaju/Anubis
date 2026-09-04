@@ -25,10 +25,20 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
-from config import GeminiModel, get_gemini_model
+import google as genai
+
+from config import get_gemini_model
+
+
+def _get_api_key() -> str:
+    config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)["gemini_api_key"]
+
 
 def _gemini_client():
-    return GeminiModel(get_gemini_model())
+    genai.configure(api_key=_get_api_key())
+    return genai.GenerativeModel(get_gemini_model())
 
 
 def _detect_type(path: Path) -> str:
