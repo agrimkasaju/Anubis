@@ -38,6 +38,7 @@ from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
 from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
+from actions.codex_coding      import codex_coding
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from core.wake_word import WakeWordListener
@@ -365,6 +366,22 @@ TOOL_DECLARATIONS = [
                 "timeout":      {"type": "INTEGER", "description": "Run timeout in seconds (default: 30)"},
             },
             "required": ["description"]
+        }
+    },
+    {
+        "name": "codex_coding",
+        "description": "Runs an optional coding task with Codex inside a restricted project workspace.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING", "description": "explain | review | analyze | edit | build"},
+                "description":  {"type": "STRING", "description": "What Codex should inspect or change"},
+                "project_name": {"type": "STRING", "description": "Project folder inside the Codex workspace"},
+                "file_path":    {"type": "STRING", "description": "Optional file inside the Codex workspace"},
+                "language":     {"type": "STRING", "description": "Optional programming language"},
+                "code":         {"type": "STRING", "description": "Optional code to inspect"},
+            },
+            "required": ["action"]
         }
     },
     {
@@ -781,6 +798,10 @@ class JarvisLive:
 
             elif name == "dev_agent":
                 r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
+            elif name == "codex_coding":
+                r = await loop.run_in_executor(None, lambda: codex_coding(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
             elif name == "agent_task":

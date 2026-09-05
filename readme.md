@@ -24,13 +24,63 @@ O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous j
    cd Anubis
    ```
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   playwright install
+2. **Install uv:**
+
+   Windows PowerShell:
+
+   ```powershell
+   winget install --id=astral-sh.uv -e
    ```
 
-3. **Configure API Keys:**
+   WSL/Linux:
+
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source ~/.bashrc
+   ```
+
+3. **Create a clean Python 3.10 virtual environment:**
+
+   If an old environment is active, run `deactivate` first. Then remove only
+   the `.venv` folder in this repository.
+
+   Windows PowerShell:
+
+   ```powershell
+   if (Test-Path .venv) { Remove-Item -Recurse -Force .venv }
+   uv venv --python 3.10
+   .venv\Scripts\Activate.ps1
+   ```
+
+   WSL/Linux:
+
+   ```bash
+   rm -rf .venv
+   sudo apt update
+   sudo apt install -y portaudio19-dev
+   uv venv --python 3.10
+   source .venv/bin/activate
+   ```
+
+   The PortAudio development package is required to build `pyaudio` on
+   WSL/Linux. Windows normally installs its prebuilt wheel.
+
+4. **Install dependencies:**
+
+   ```bash
+   python setup.py
+   ```
+
+   `setup.py` requires the active `.venv`, installs `requirements.txt`
+   with uv for that exact Python interpreter, and installs only the Playwright
+   Chromium browser. To install manually instead:
+
+   ```bash
+   uv pip install -r requirements.txt
+   python -m playwright install chromium
+   ```
+
+5. **Configure API Keys:**
    Add your keys to `config/api_keys.json`:
    ```json
    {
@@ -38,6 +88,30 @@ O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous j
      "openrouter_api_key": "YOUR_OPENROUTER_KEY"
    }
    ```
+
+6. **Optional Codex coding tool:**
+
+   Set a dedicated folder that Codex is allowed to use. Review and explanation
+   requests are read-only; edit and build requests can write only in this
+   folder.
+
+   WSL/Linux:
+
+   ```bash
+   export ANUBIS_CODE_WORKSPACE="$HOME/JarvisProjects"
+   mkdir -p "$ANUBIS_CODE_WORKSPACE"
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   $env:ANUBIS_CODE_WORKSPACE = "$HOME\JarvisProjects"
+   New-Item -ItemType Directory -Force $env:ANUBIS_CODE_WORKSPACE
+   ```
+
+   The Codex SDK reuses an existing Codex login. Only use a company-managed
+   Codex account if your organization's policy permits this repository and
+   data.
 
 ---
 
