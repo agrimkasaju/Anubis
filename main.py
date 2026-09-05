@@ -70,8 +70,16 @@ def get_base_dir():
     return Path(__file__).resolve().parent
 
 
-BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+BASE_DIR = get_base_dir()
+
+def _resolve_config_path() -> Path:
+    config_sub = BASE_DIR / "config" / "api_keys.json"
+    if config_sub.exists():
+        return config_sub
+    return BASE_DIR / "api_keys.json"
+
+API_CONFIG_PATH = _resolve_config_path()
+
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL = get_gemini_live_model().replace("models/", "")
 CHANNELS            = 1
@@ -81,8 +89,14 @@ CHUNK_SIZE          = 1024
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    if not API_CONFIG_PATH.exists():
+        return ""
+    try:
+        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("gemini_api_key", "").strip()
+    except Exception:
+        return ""
 
 
 def _load_system_prompt() -> str:
@@ -797,15 +811,20 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: get_stock_analysis(symbol))
                 result = r or f"No data returned for {symbol}."
             elif name == "shutdown_orion":
+                if getattr(self, '_is_shutting_down', False):
+                    return types.FunctionResponse(id=fc.id, name=name, response={"result": "already shutting down"})
+                self._is_shutting_down = True
+                
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
 
                 def _shutdown():
-                    import time, sys, os
+                    import time, os
                     time.sleep(1)
                     os._exit(0)
 
                 threading.Thread(target=_shutdown, daemon=True).start()
+                result = "Shutting down..."
             else:
                 result = f"Unknown tool: {name}"
 
@@ -1045,7 +1064,10 @@ def main(minimized: bool = False):
     signal.signal(signal.SIGUSR1, wake_from_signal)
 
     def runner():
-        ui.wait_for_api_key()
+        # Only block and ask for input if the key is not found or empty
+        if not _get_api_key():
+            ui.wait_for_api_key()
+
         orion = JarvisLive(ui)
         try:
             asyncio.run(orion.run())

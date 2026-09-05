@@ -1,0 +1,23 @@
+==================================================
+        ANUBIS DEBUGGER & CONTROL SHEET
+==================================================
+
+1. VIEW LIVE SYSTEMD LOGS:
+   journalctl --user -u anubis.service -f
+
+2. RESTART ANUBIS SERVICE:
+   systemctl --user restart anubis.service
+
+3. STOP ANUBIS SERVICE:
+   systemctl --user stop anubis.service
+
+4. CHECK SERVICE STATUS:
+   systemctl --user status anubis.service
+
+5. RUN MANUALLY (Foreground / Interactive Debugging):
+   source .venv/bin/activate
+   python main.py
+
+6. VIEW DOCKER CONTAINER LOGS (Stock Analyzer):
+   docker logs --tail 50 stock_analyzer_service
+==================================================

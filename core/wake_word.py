@@ -18,8 +18,12 @@ class WakeWordListener:
         # Check if custom ONNX model exists; otherwise load default models
         if os.path.exists(model_path):
             print(f"🐺 [ANUBIS]: Loaded custom wake-word model from '{model_path}'")
-            # Pass the custom path directly using the internal paths parameter 
-            self.oww_model = openwakeword.model.Model(wakeword_model_paths=[os.path.abspath(model_path)])
+            # Pass the custom path directly using the internal paths parameter
+            framework = "onnx" if model_path.endswith(".onnx") else "tflite"
+            self.oww_model = openwakeword.model.Model(
+                wakeword_models=[os.path.abspath(model_path)],
+                inference_framework=framework
+            )
         else:
             print(f"🐺 [ANUBIS]: Custom model '{model_path}' not found. Loading default built-in models...")
             self.oww_model = openwakeword.model.Model()
