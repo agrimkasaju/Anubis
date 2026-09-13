@@ -4,11 +4,16 @@
 # hardcoded tab/click sequences — works on any screen resolution.
 
 import time
-import pyautogui
 from pathlib import Path
 
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.08
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = True
+    pyautogui.PAUSE = 0.08
+    _PYAUTOGUI = True
+except Exception:
+    pyautogui = None
+    _PYAUTOGUI = False
 
 def _open_app(app_name: str) -> bool:
     """Opens an app via Windows search."""
@@ -191,6 +196,8 @@ def send_message(
         return "Please specify who to send the message to, sir."
     if not message_text:
         return "Please specify what message to send, sir."
+    if not _PYAUTOGUI or pyautogui is None:
+        return "GUI automation is unavailable: no active graphical display detected."
 
     print(f"[SendMessage] 📨 {platform} → {receiver}: {message_text[:40]}")
     if player:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 _CONFIG_PATH = Path(__file__).parent / "api_keys.json"
 
-DEFAULT_GEMINI_MODEL      = "gemini-3.5-flash"
+DEFAULT_GEMINI_MODEL      = "gemini-3.8-flash"
 DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite"
 
 # Use a dedicated Live API endpoint for bidiGenerateContent:

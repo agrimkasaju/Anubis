@@ -103,12 +103,12 @@ class WakeWordListener:
                     continue
     
                 audio_data = np.frombuffer(data, dtype=np.int16)
-    
+
                 # Predict wake-word presence
                 prediction = self.oww_model.predict(audio_data)
-    
+
                 for model_name, score in self.oww_model.prediction_buffer.items():
-                    if score[-1] > 0.05:
+                    if score[-1] > 0.4:
                         print(f"🐺 [ANUBIS]: Wake-word detected! ({model_name})")
                         self.callback()
                         time.sleep(1.5)

@@ -14,6 +14,47 @@ import traceback
 import signal
 from pathlib import Path
 
+def _ensure_display_environment():
+    """Auto-detect and fix DISPLAY and WAYLAND_DISPLAY for Linux graphical sessions."""
+    if sys.platform != "linux":
+        return
+    import socket
+
+    def is_x_socket_alive(disp: str) -> bool:
+        try:
+            dno = disp.split(":")[-1].split(".")[0]
+            sock = f"/tmp/.X11-unix/X{dno}"
+            if not os.path.exists(sock):
+                return False
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.3)
+            s.connect(sock)
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    current_disp = os.environ.get("DISPLAY")
+    if not current_disp or not is_x_socket_alive(current_disp):
+        if os.path.isdir("/tmp/.X11-unix"):
+            for entry in sorted(os.listdir("/tmp/.X11-unix")):
+                if entry.startswith("X") and entry[1:].isdigit():
+                    candidate = f":{entry[1:]}"
+                    if is_x_socket_alive(candidate):
+                        os.environ["DISPLAY"] = candidate
+                        break
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    os.environ["XDG_RUNTIME_DIR"] = runtime_dir
+    current_wayland = os.environ.get("WAYLAND_DISPLAY")
+    if not current_wayland or not os.path.exists(os.path.join(runtime_dir, current_wayland)):
+        for name in ("wayland-0", "wayland-1", "wayland-2"):
+            if os.path.exists(os.path.join(runtime_dir, name)):
+                os.environ["WAYLAND_DISPLAY"] = name
+                break
+
+_ensure_display_environment()
+
 import sounddevice as sd
 from google import genai
 from google.genai import types
@@ -38,6 +79,7 @@ from actions.browser_control   import browser_control
 from actions.file_controller   import file_controller
 from actions.code_helper       import code_helper
 from actions.dev_agent         import dev_agent
+from actions.antigravity_coding import antigravity_coding
 from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from core.wake_word import WakeWordListener
@@ -365,6 +407,23 @@ TOOL_DECLARATIONS = [
                 "timeout":      {"type": "INTEGER", "description": "Run timeout in seconds (default: 30)"},
             },
             "required": ["description"]
+        }
+    },
+    {
+        "name": "antigravity_coding",
+        "description": "Runs a sandboxed coding task using Google Antigravity CLI (agy) inside a restricted project workspace.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING", "description": "explain | review | analyze | edit | build | write | optimize"},
+                "description":  {"type": "STRING", "description": "What Antigravity should inspect, write, or change"},
+                "project_name": {"type": "STRING", "description": "Project folder inside the Antigravity workspace"},
+                "file_path":    {"type": "STRING", "description": "Optional file inside the Antigravity workspace"},
+                "language":     {"type": "STRING", "description": "Optional programming language"},
+                "code":         {"type": "STRING", "description": "Optional code to inspect"},
+                "timeout":      {"type": "INTEGER", "description": "Optional timeout in seconds"},
+            },
+            "required": ["action"]
         }
     },
     {
@@ -783,6 +842,10 @@ class JarvisLive:
                 r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
                 result = r or "Done."
 
+            elif name == "antigravity_coding":
+                r = await loop.run_in_executor(None, lambda: antigravity_coding(parameters=args, player=self.ui, speak=self.speak))
+                result = r or "Done."
+
             elif name == "agent_task":
                 from agent.task_queue import get_queue, TaskPriority
                 priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
@@ -857,21 +920,25 @@ class JarvisLive:
         print("[ORION] 🎤 Mic task ready.")
         loop = asyncio.get_event_loop()
 
+        def _enqueue(item):
+            try:
+                if self.out_queue:
+                    self.out_queue.put_nowait(item)
+            except asyncio.QueueFull:
+                pass
+
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
                 orion_speaking = self._is_speaking
 
             ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else True
 
-            if not orion_speaking and not self.ui.muted and ui_visible:
+            if not orion_speaking and not self.ui.muted and ui_visible and self.out_queue:
                 data = indata.tobytes()
-                try:
-                    loop.call_soon_threadsafe(
-                        self.out_queue.put_nowait,
-                        {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
-                    )
-                except asyncio.QueueFull:
-                    pass
+                loop.call_soon_threadsafe(
+                    _enqueue,
+                    {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
+                )
 
         while True:
             ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else False

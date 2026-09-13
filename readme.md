@@ -39,6 +39,26 @@ O.R.I.O.N MARK I is a revamped real-time AI assistant optimized for autonomous j
    }
    ```
 
+4. **Optional Antigravity CLI coding tool:**
+   Set a dedicated folder that Antigravity is allowed to use. Review and explanation
+   requests are read-only (run in `--mode plan` with `--sandbox`); edit, write, and build
+   requests can write only inside this folder (run in `--mode accept-edits`).
+
+   WSL/Linux:
+   ```bash
+   export ANUBIS_CODE_WORKSPACE="$HOME/Desktop/JarvisProjects"
+   mkdir -p "$ANUBIS_CODE_WORKSPACE"
+   ```
+
+   Windows PowerShell:
+   ```powershell
+   $env:ANUBIS_CODE_WORKSPACE = "$HOME\Desktop\JarvisProjects"
+   New-Item -ItemType Directory -Force $env:ANUBIS_CODE_WORKSPACE
+   ```
+
+   Ensure `agy` (Antigravity CLI) is installed and available on PATH (or set `ANUBIS_ANTIGRAVITY_BIN`).
+   Optional configurations include `ANUBIS_ANTIGRAVITY_MODEL` and `ANUBIS_ANTIGRAVITY_EFFORT`.
+
 ---
 
 ## ⚡ Workflow

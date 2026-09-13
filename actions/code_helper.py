@@ -545,6 +545,11 @@ def code_helper(
         timeout     : Execution timeout in seconds (default: 30)
     """
     p           = parameters or {}
+    engine      = str(p.get("engine") or os.getenv("ANUBIS_CODE_ENGINE", "")).strip().lower()
+    if engine == "antigravity":
+        from actions.antigravity_coding import antigravity_coding
+        return antigravity_coding(parameters, response, player, session_memory, speak)
+
     action      = p.get("action", "auto").lower().strip()
     description = p.get("description", "").strip()
     language    = p.get("language", "python").strip()

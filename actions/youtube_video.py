@@ -9,7 +9,6 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote_plus
 
-import pyautogui
 import numpy as np
 
 try:
