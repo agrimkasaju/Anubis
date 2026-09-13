@@ -20,4 +20,28 @@
 
 6. VIEW DOCKER CONTAINER LOGS (Stock Analyzer):
    docker logs --tail 50 stock_analyzer_service
+
+7. SETUP / INSTALL SYSTEMD SERVICE:
+   mkdir -p ~/.config/systemd/user
+   cat << 'EOF' > ~/.config/systemd/user/anubis.service
+[Unit]
+Description=Anubis JARVIS Voice Assistant Service
+After=graphical-session.target sound.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Downloads/Anubis
+ExecStartPre=/bin/sleep 2
+ExecStart=%h/Downloads/Anubis/.venv/bin/python3 %h/Downloads/Anubis/main.py --minimized
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+
+   systemctl --user daemon-reload
+   systemctl --user enable --now anubis.service
 ==================================================
