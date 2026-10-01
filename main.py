@@ -345,6 +345,28 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "ai_job_search",
+        "description": (
+            "Opens the AI Job Search browser UI dashboard directly for the user. "
+            "Call this immediately whenever the user wants to open the job search framework, search for jobs, find tech jobs, or apply for jobs. "
+            "Never ask the user whether they want to scrape or input a URL—simply open the browser dashboard immediately so they can manage it in the UI."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "launch | scrape | manual"
+                },
+                "url": {
+                    "type": "STRING",
+                    "description": "Optional job posting URL"
+                }
+            },
+            "required": []
+        }
+    },
+    {
         "name": "file_controller",
         "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
         "parameters": {
@@ -616,6 +638,8 @@ class JarvisLive:
         self.out_queue      = None
         self._loop          = None
         self._is_speaking   = False
+        self._is_thinking   = False
+        self._turn_complete = True
         self._speaking_lock = threading.Lock()
         self._mic_stream    = None  # Track active sounddevice stream
         self.ui.on_text_command = self._on_text_command
@@ -623,6 +647,7 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        self.set_thinking(True)
         asyncio.run_coroutine_threadsafe(
             self.session.send(input=text, end_of_turn=True),
             self._loop
@@ -631,6 +656,7 @@ class JarvisLive:
     def speak(self, text: str):
         if not self._loop or not self.session:
             return
+        self.set_thinking(True)
         asyncio.run_coroutine_threadsafe(
             self.session.send(input=text, end_of_turn=True),
             self._loop
@@ -641,8 +667,25 @@ class JarvisLive:
             self._is_speaking = value
         if value:
             self.ui.set_state("SPEAKING")
-        elif not self.ui.muted:
+        elif not self._is_thinking and not self.ui.muted:
             self.ui.set_state("LISTENING")
+
+    def set_thinking(self, value: bool):
+        with self._speaking_lock:
+            self._is_thinking = value
+        if value:
+            self._flush_out_queue()
+            self.ui.set_state("THINKING")
+        elif not self._is_speaking and not self.ui.muted:
+            self.ui.set_state("LISTENING")
+
+    def _flush_out_queue(self):
+        if self.out_queue:
+            while not self.out_queue.empty():
+                try:
+                    self.out_queue.get_nowait()
+                except Exception:
+                    break
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
@@ -735,8 +778,6 @@ class JarvisLive:
             if key and value:
                 update_memory({category: {key: {"value": value}}})
                 print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
             return types.FunctionResponse(
                 id=fc.id, name=name,
                 response={"result": "ok", "silent": True}
@@ -873,6 +914,13 @@ class JarvisLive:
 
                 r = await loop.run_in_executor(None, lambda: get_stock_analysis(symbol))
                 result = r or f"No data returned for {symbol}."
+            elif name == "ai_job_search":
+                from actions.ai_job_search import ai_job_search_action
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: ai_job_search_action(parameters=args, player=self.ui, speak=None)
+                )
+                result = r or "Done."
             elif name == "shutdown_orion":
                 if getattr(self, '_is_shutting_down', False):
                     return types.FunctionResponse(id=fc.id, name=name, response={"result": "already shutting down"})
@@ -895,9 +943,6 @@ class JarvisLive:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
-
-        if not self.ui.muted:
-            self.ui.set_state("LISTENING")
 
         print(f"[ORION] 📤 {name} → {str(result)[:80]}")
 
@@ -929,11 +974,11 @@ class JarvisLive:
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
-                orion_speaking = self._is_speaking
+                busy = self._is_speaking or self._is_thinking
 
             ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else True
 
-            if not orion_speaking and not self.ui.muted and ui_visible and self.out_queue:
+            if not busy and not self.ui.muted and ui_visible and self.out_queue:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     _enqueue,
@@ -988,12 +1033,24 @@ class JarvisLive:
                 async for response in live_response_guard(self.session):
 
                     if response.data:
+                        self.set_thinking(False)
+                        self._turn_complete = False
                         self.audio_in_queue.put_nowait(response.data)
 
                     if response.server_content:
                         sc = response.server_content
 
+                        if getattr(sc, 'interrupted', False):
+                            while not self.audio_in_queue.empty():
+                                try:
+                                    self.audio_in_queue.get_nowait()
+                                except Exception:
+                                    break
+                            self.set_speaking(False)
+                            self.set_thinking(False)
+
                         if sc.output_transcription and sc.output_transcription.text:
+                            self.set_thinking(False)
                             self.set_speaking(True)
                             txt = sc.output_transcription.text.strip()
                             if txt:
@@ -1005,9 +1062,10 @@ class JarvisLive:
                                 in_buf.append(txt)
 
                         if sc.turn_complete:
-                            # Only turn the mic back on if the audio queue is already empty
+                            self._turn_complete = True
                             if self.audio_in_queue.empty():
                                 self.set_speaking(False)
+                                self.set_thinking(False)
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
@@ -1031,14 +1089,19 @@ class JarvisLive:
                                 ).start()
 
                     if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
-                            print(f"[ORION] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
+                        self.set_thinking(True)
+                        try:
+                            fn_responses = []
+                            for fc in response.tool_call.function_calls:
+                                print(f"[ORION] 📞 {fc.name}")
+                                fr = await self._execute_tool(fc)
+                                fn_responses.append(fr)
+                            await self.session.send_tool_response(
+                                function_responses=fn_responses
+                            )
+                        except Exception as e:
+                            print(f"[ORION] ❌ Tool response error: {e}")
+                            self.set_thinking(False)
 
         except Exception as e:
             print(f"[ORION] ❌ Recv: {e}")
@@ -1063,13 +1126,14 @@ class JarvisLive:
                     self.set_speaking(True)
                     await asyncio.to_thread(stream.write, chunk)
                     
-                    # Once the last chunk is sent to the speaker, safely unmute the mic
-                    if self.audio_in_queue.empty():
+                    if self.audio_in_queue.empty() and self._turn_complete:
                         self.set_speaking(False)
+                        self.set_thinking(False)
             except (asyncio.CancelledError, Exception):
                 pass
             finally:
                 self.set_speaking(False)
+                self.set_thinking(False)
                 stream.stop()
                 stream.close()
         except Exception as e:
