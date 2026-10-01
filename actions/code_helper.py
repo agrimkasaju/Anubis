@@ -11,6 +11,7 @@
 #   optimize     → Mevcut kodu Gemini ile optimize et (performans, okunabilirlik, best practices)
 #   auto         → (default) Intent auto-detected from context
 
+import os
 import subprocess
 import sys
 import json
@@ -342,32 +343,44 @@ Updated code:"""
     return f"File edited. {status}\n\nPreview:\n{_preview(edited)}"
 
 
-def _explain_action(file_path, code, player) -> str:
+def _explain_action(file_path, code, description, player) -> str:
     if file_path and not code:
         code, err = _read_file(file_path)
         if err:
             return err
-    if not code:
-        return "Please provide code or a file path to explain, sir."
+    if not code and not description:
+        return "Please provide code, a file path, or a description to explain, sir."
 
     if player:
-        player.write_log("[Code] Analyzing code...")
+        player.write_log("[Code] Analyzing...")
 
     model  = _get_gemini()
-    prompt = f"""Explain what this code does in simple, clear language.
-Focus on: what it does, how it works, and any important details.
+    if code:
+        context = f"Context / Focus: {description}\n\n" if description else ""
+        prompt = f"""Explain what this code does in simple, clear language.
+{context}Focus on: what it does, how it works, and any important details.
 Be concise — 3 to 6 sentences maximum.
 
 Code:
 {code[:4000]}
 
 Explanation:"""
+    else:
+        prompt = f"""Explain the following programming concept, algorithm, or problem approach clearly and concisely:
+{description}
+
+Focus on:
+1. Core intuition / approach
+2. Step-by-step logic
+3. Time and space complexity
+
+Keep it clear and concise."""
 
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"Could not explain code: {e}"
+        return f"Could not explain: {e}"
 
 
 def _run_action(file_path, args, timeout, player) -> str:
@@ -574,7 +587,7 @@ def code_helper(
         )
 
     elif action == "explain":
-        return _explain_action(file_path, code, player)
+        return _explain_action(file_path, code, description, player)
 
     elif action == "run":
         return _run_action(file_path, args, timeout, player)

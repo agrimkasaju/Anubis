@@ -43,7 +43,7 @@ class OpenRouterClient:
         prompt: str,
         system: str = "You are a helpful assistant.",
         model: Optional[str] = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 800,
         temperature: float = 0.7,
     ) -> str:
         try:

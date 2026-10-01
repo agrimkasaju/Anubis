@@ -33,6 +33,7 @@ def _get_api_key() -> str:
 
 def _gemini_search(query: str) -> str:
     from google import genai
+    from config import get_gemini_model
 
     client   = genai.Client(api_key=_get_api_key())
     response = client.models.generate_content(
