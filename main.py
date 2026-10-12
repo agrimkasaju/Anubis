@@ -55,6 +55,8 @@ def _ensure_display_environment():
 
 _ensure_display_environment()
 
+import numpy as np
+from scipy import signal as dsp
 import sounddevice as sd
 from google import genai
 from google.genai import types
@@ -687,6 +689,17 @@ class JarvisLive:
                 except Exception:
                     break
 
+    def stop_speaking(self):
+        """Immediately drains incoming audio and silences speech."""
+        if self.audio_in_queue:
+            while not self.audio_in_queue.empty():
+                try:
+                    self.audio_in_queue.get_nowait()
+                except Exception:
+                    break
+        self.set_speaking(False)
+        self.set_thinking(False)
+
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
@@ -752,7 +765,9 @@ class JarvisLive:
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
-            input_audio_transcription={},
+            input_audio_transcription=types.AudioTranscriptionConfig(
+                language_codes=["en"]
+            ),
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
@@ -859,13 +874,11 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "screen_process":
-                threading.Thread(
-                    target=screen_process,
-                    kwargs={"parameters": args, "response": None,
-                            "player": self.ui, "session_memory": None},
-                    daemon=True
-                ).start()
-                result = "Vision module activated. Stay completely silent — vision module will speak directly."
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: screen_process(parameters=args, player=self.ui)
+                )
+                result = r or "Screen processed."
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
@@ -957,13 +970,17 @@ class JarvisLive:
             await self.session.send_realtime_input(
                 audio=types.Blob(
                     data=msg["data"],
-                    mime_type="audio/pcm"
+                    mime_type=msg.get("mime_type", f"audio/pcm;rate={SEND_SAMPLE_RATE}")
                 )
             )
 
     async def _listen_audio(self):
         print("[ORION] 🎤 Mic task ready.")
         loop = asyncio.get_event_loop()
+
+        # 50 Hz high-pass Butterworth filter to remove hardware DC offset (+5940) and low-frequency rumble
+        hp_b, hp_a = dsp.butter(2, 50, btype="highpass", fs=SEND_SAMPLE_RATE)
+        hp_zi = dsp.lfilter_zi(hp_b, hp_a) * 5940.0
 
         def _enqueue(item):
             try:
@@ -973,55 +990,48 @@ class JarvisLive:
                 pass
 
         def callback(indata, frames, time_info, status):
+            nonlocal hp_zi
+            if status:
+                print(f"[ORION] ⚠️ Mic status: {status}", flush=True)
+
             with self._speaking_lock:
                 busy = self._is_speaking or self._is_thinking
 
             ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else True
 
             if not busy and not self.ui.muted and ui_visible and self.out_queue:
-                data = indata.tobytes()
+                chunk_f = indata[:, 0].astype(np.float32)
+                filtered, hp_zi = dsp.lfilter(hp_b, hp_a, chunk_f, zi=hp_zi)
+                # Boost weak signal (std dev ~200) by 2.5x so consonants and formants are clear
+                boosted = np.clip(filtered * 2.5, -32768, 32767).astype(np.int16)
+                data = boosted.tobytes()
                 loop.call_soon_threadsafe(
                     _enqueue,
                     {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
                 )
 
-        while True:
-            ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else False
-            
-            # Open mic stream ONLY when UI is visible
-            if ui_visible and self._mic_stream is None:
+        try:
+            self._mic_stream = sd.InputStream(
+                samplerate=SEND_SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SIZE,
+                callback=callback,
+            )
+            self._mic_stream.start()
+            print("[ORION] 🎤 Mic stream ACTIVE.")
+            while True:
+                await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[ORION] ❌ Mic stream error: {e}")
+        finally:
+            if self._mic_stream:
                 try:
-                    self._mic_stream = sd.InputStream(
-                        samplerate=SEND_SAMPLE_RATE,
-                        channels=CHANNELS,
-                        dtype="int16",
-                        blocksize=CHUNK_SIZE,
-                        callback=callback,
-                    )
-                    self._mic_stream.start()
-                    print("[ORION] 🎤 Mic stream OPEN for conversation.")
-                except Exception as e:
-                    print(f"[ORION] ❌ Failed to open mic: {e}")
-            
-            # Close mic stream asynchronously when UI is hidden to free hardware
-            elif not ui_visible and self._mic_stream is not None:
-                try:
-                    stream_to_close = self._mic_stream
-                    self._mic_stream = None
-                    
-                    def _async_close(s):
-                        try:
-                            s.stop()
-                            s.close()
-                            print("[ORION] 🔒 Mic stream CLOSED asynchronously.")
-                        except Exception as e:
-                            print(f"[ORION] ⚠️ Error closing mic: {e}")
-
-                    threading.Thread(target=_async_close, args=(stream_to_close,), daemon=True).start()
-                except Exception as e:
-                    print(f"[ORION] ⚠️ Mic close error: {e}")
-
-            await asyncio.sleep(0.2)
+                    self._mic_stream.stop()
+                    self._mic_stream.close()
+                except Exception:
+                    pass
+                self._mic_stream = None
 
     async def _receive_audio(self):
         print("[ORION] 👂 Recv started")
@@ -1159,7 +1169,7 @@ class JarvisLive:
                     self.session        = session
                     self._loop          = asyncio.get_event_loop()
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=50)
+                    self.out_queue      = asyncio.Queue(maxsize=500)
 
                     print("[ORION] ✅ Connected.")
                     self.ui.set_state("LISTENING")
@@ -1187,7 +1197,7 @@ def main(minimized: bool = False):
     ui_instance = ui
 
     # --- START VOICE LISTENER ---
-    listener = WakeWordListener(callback=on_wake_word_detected, model_path="orion.onnx")
+    listener = WakeWordListener(callback=on_wake_word_detected, model_path=str(BASE_DIR / "orion.onnx"))
     ui.listener = listener
     listener.start()
     # ------------------------------
@@ -1200,6 +1210,8 @@ def main(minimized: bool = False):
             ui.wait_for_api_key()
 
         orion = JarvisLive(ui)
+        ui.orion = orion
+        ui._win.orion = orion
         try:
             asyncio.run(orion.run())
         except KeyboardInterrupt:
