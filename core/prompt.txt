@@ -42,3 +42,5 @@ TOOL SELECTION:
   multiple tools (e.g. "research X and save to file", "create a project").
 - Simple rule: if it can be done in ONE action → computer_settings. 
   If it needs 3+ steps across different tools → agent_task.
+- ai_job_search → ONLY when the user explicitly asks to open the job application dashboard or start the tailoring pipeline.
+- web_search → Use for ANY web search, browsing, research, people, recruiters, companies, or general queries. NEVER call ai_job_search for lookups or searches.

@@ -349,9 +349,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "ai_job_search",
         "description": (
-            "Opens the AI Job Search browser UI dashboard directly for the user. "
-            "Call this immediately whenever the user wants to open the job search framework, search for jobs, find tech jobs, or apply for jobs. "
-            "Never ask the user whether they want to scrape or input a URL—simply open the browser dashboard immediately so they can manage it in the UI."
+            "Opens the AI Job Search companion browser dashboard. "
+            "Call this ONLY when the user explicitly asks to open the job search dashboard, auto-tailor their resume/cover letter, or launch the application pipeline. "
+            "NEVER call this for searching, browsing the web, answering questions, or researching people, companies, or roles—use web_search for ALL searches."
         ),
         "parameters": {
             "type": "OBJECT",
