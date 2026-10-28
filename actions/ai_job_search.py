@@ -7,9 +7,11 @@ from config import get_config
 
 _cfg = get_config()
 _PORT = int(os.getenv("DASHBOARD_PORT") or _cfg.get("dashboard_port") or 8088)
-_HOST = os.getenv("DASHBOARD_HOST") or _cfg.get("dashboard_host") or "127.0.0.1"
-if _HOST == "0.0.0.0":
-    _HOST = "127.0.0.1"
+_remote_ip = (_cfg.get("remote_llm_host") or "").split(":")[0]                                                                                         
+    _default_host = _remote_ip if _remote_ip else "127.0.0.1"                                                                                              
+    _HOST = os.getenv("DASHBOARD_HOST") or _cfg.get("dashboard_host") or _default_host                                                                     
+    if _HOST == "0.0.0.0":                                                                                                                                 
+        _HOST = _default_host 
 
 AUTH_TOKEN = os.getenv("DASHBOARD_TOKEN") or _cfg.get("dashboard_token", "")
 DASHBOARD_BASE_URL = f"http://{_HOST}:{_PORT}/"

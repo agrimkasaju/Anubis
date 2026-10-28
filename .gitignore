@@ -7,3 +7,4 @@ dashboard.log
 *.log
 .env
 *.env
+.venv/

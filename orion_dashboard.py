@@ -362,7 +362,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div id="res-full-analysis" class="mt-2 text-zinc-400 whitespace-pre-wrap font-mono text-[11px] max-h-60 overflow-y-auto custom-scroll pt-2 border-t border-zinc-800"></div>
           </details>
 
-          <a href="http://localhost:8000" target="_blank" class="block text-center py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs transition">
+          <a id="stock-desktop-link" href="#" target="_blank" onclick="this.href=window.location.protocol+'//'+window.location.hostname+':8000'" class="block text-center py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs transition">
             Open Full Desktop Dashboard (Port 8000) ↗
           </a>
         </div>
@@ -695,11 +695,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
         pillsContainer.classList.remove('hidden');
 
-        // If no cached stock in localStorage, load first recent stock
-        if (!localStorage.getItem('orion_stock_cache') && items.length > 0) {
-          document.getElementById('stock-ticker').value = items[0].symbol;
-          renderStockCard(items[0]);
-          localStorage.setItem('orion_stock_cache', JSON.stringify({ ...items[0], timestamp: Date.now() }));
+        // Sync currently viewed card with latest data without hijacking the user's input
+        if (items.length > 0) {
+          const inputEl = document.getElementById('stock-ticker');
+          const resTickerEl = document.getElementById('res-ticker');
+          const displayedSymbol = (resTickerEl ? resTickerEl.innerText : '').trim().toUpperCase();
+
+          if (displayedSymbol) {
+            const match = items.find(it => it.symbol === displayedSymbol);
+            if (match) {
+              renderStockCard(match);
+              localStorage.setItem('orion_stock_cache', JSON.stringify({ ...match, timestamp: Date.now() }));
+            }
+          } else {
+            const isInputActive = document.activeElement === inputEl;
+            if (!inputEl.value && !isInputActive) {
+              inputEl.value = items[0].symbol;
+              renderStockCard(items[0]);
+              localStorage.setItem('orion_stock_cache', JSON.stringify({ ...items[0], timestamp: Date.now() }));
+            }
+          }
         }
       } catch (e) {}
     }
@@ -749,11 +764,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     } catch (e) {}
 
     loadStockHistory();
+    setInterval(loadStockHistory, 3500);
     pollPipelineStatus();
 
     function refreshAll() {
       pollJobBridge();
       pollPipelineStatus();
+      loadStockHistory();
     }
 
     // Keyboard shortcuts for Desktop view
@@ -944,7 +961,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     self.send_response(200)
                     self.send_header("Content-Type", "image/png")
                     self.send_header("Content-Length", str(len(img_bytes)))
-                    self.send_header("Cache-Control", "public, max-age=300")
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
                     self.wfile.write(img_bytes)
