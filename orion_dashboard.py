@@ -340,6 +340,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
             <div class="flex items-baseline space-x-2">
               <span id="res-price" class="text-2xl font-bold text-white">$124.50</span>
+              <span id="res-session-badge" class="hidden text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">AH</span>
               <span id="res-range" class="text-xs text-zinc-400 font-mono">2-Wk: $115.00 - $128.00</span>
             </div>
             <div id="res-news-call" class="text-xs text-zinc-400 border-t border-zinc-800/80 pt-2 mt-2">
@@ -608,9 +609,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       const symbol = data.symbol || '';
       document.getElementById('res-ticker').innerText = symbol;
       const badge = document.getElementById('res-stance-badge');
+      const sessionBadge = document.getElementById('res-session-badge');
 
       if (data.price !== null && data.price !== undefined) {
         document.getElementById('res-price').innerText = '$' + Number(data.price).toFixed(2);
+        if (data.market_session && data.market_session !== 'Regular') {
+          const badgeText = data.market_session === 'Pre-Market' ? 'PRE' : 'AH';
+          const regText = data.regular_price ? ` (Reg: $${Number(data.regular_price).toFixed(2)})` : '';
+          if (sessionBadge) {
+            sessionBadge.innerText = `${badgeText}${regText}`;
+            sessionBadge.classList.remove('hidden');
+          }
+        } else {
+          if (sessionBadge) sessionBadge.classList.add('hidden');
+        }
         document.getElementById('res-range').innerText = data.range ? '2-Wk: ' + data.range : '';
         const stance = (data.stance || 'NEUTRAL').toUpperCase();
         badge.innerText = stance;
@@ -634,6 +646,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           chartBox.classList.add('hidden');
         }
       } else {
+        if (sessionBadge) sessionBadge.classList.add('hidden');
         document.getElementById('res-price').innerText = 'Symbol Not Found';
         document.getElementById('res-range').innerText = 'Check ticker spelling';
         badge.innerText = 'INVALID';
@@ -995,7 +1008,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "range": rng,
                         "news_call": item.get("news_summary") or "",
                         "raw_analysis": an,
-                        "chart_url": f"/api/stock/chart?ticker={t}"
+                        "chart_url": f"/api/stock/chart?ticker={t}",
+                        "market_session": item.get("market_session", "Regular"),
+                        "regular_price": item.get("regular_price")
                     })
                 self._send_json(hist)
             except Exception:
@@ -1044,7 +1059,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "range": rng,
                     "news_call": local_summary or "Neutral / None",
                     "raw_analysis": analysis_str,
-                    "chart_url": f"/api/stock/chart?ticker={symbol}"
+                    "chart_url": f"/api/stock/chart?ticker={symbol}",
+                    "market_session": data.get("market_session", "Regular"),
+                    "regular_price": data.get("regular_price")
                 })
             except Exception as e:
                 self._send_json({"error": str(e)}, status=500)
