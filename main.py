@@ -61,7 +61,7 @@ import sounddevice as sd
 from google import genai
 from google.genai import types
 from ui import JarvisUI
-from config import get_gemini_live_model
+from config import get_gemini_live_model, get_orion_voice
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -187,9 +187,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
+            "Opens any application on the computer (Linux / Pop!_OS / COSMIC). "
             "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "terminal, settings, browser, files, code, or program. Always call this tool — never just say you opened it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -302,7 +302,8 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action":      {"type": "STRING", "description": "The action to perform"},
                 "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
+                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."},
+                "confirmed":   {"type": "BOOLEAN", "description": "Set to true ONLY when the human user has verbally confirmed a pending dangerous action (shutdown/restart) in a subsequent turn."}
             },
             "required": []
         }
@@ -332,8 +333,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "confirm_job_application",
         "description": (
-            "Confirms or rejects submitting the pending job application when the user "
-            "answers yes, send it, no, or skip."
+            "Confirms or rejects a pending job across both pipeline stages: "
+            "1) Screening stage: confirms whether to scrape and process the job (action='approve' to scrape and tailor, 'skip' to ignore). "
+            "2) Review stage: confirms whether to open the compiled application and job portal on desktop (action='approve' to open/submit, 'skip' to decline). "
+            "Call when user responds yes, process, approve, open it, no, or skip."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -604,6 +607,7 @@ TOOL_DECLARATIONS = [
                     "type": "STRING",
                     "description": (
                         "identity — name, age, birthday, city, job, language, nationality | "
+                        "personality — tone of voice, slang preferences, speaking vibe, humor, companion traits | "
                         "preferences — favorite food/color/music/film/game/sport, hobbies | "
                         "projects — active projects, goals, things being built | "
                         "relationships — friends, family, partner, colleagues | "
@@ -707,40 +711,55 @@ class JarvisLive:
 
     async def _monitor_job_queue(self):
         """Monitors the IPC file, forces the UI to wake up, and prompts the user."""
-        last_announced_job = None
+        last_announced_event = None
         from job_bridge import bridge
         
         while True:
             await asyncio.sleep(1)
             pending = bridge.get_pending_job()
             
-            if pending and pending.get("job_key") != last_announced_job:
-                last_announced_job = pending.get("job_key")
-                company = pending.get("company", "a company")
-                title = pending.get("title", "a role")
+            if pending:
+                job_key = pending.get("job_key", "")
+                stage = pending.get("stage", "review")
+                event_id = f"{job_key}:{stage}"
                 
-                # --- AUTOMATIC WAKE-UP SEQUENCE ---
-                print(f"[ORION] 📢 Job received for {company}! Forcing UI wake-up...")
-                
-                # Trigger the UI to pop up from the background
-                if hasattr(self, 'ui'):
-                    if hasattr(self.ui, 'bring_to_front'):
-                        try:
-                            self.ui.bring_to_front()
-                        except Exception:
-                            pass
-                    elif hasattr(self.ui, 'show'):
-                        try:
-                            self.ui.show()
-                        except Exception:
-                            pass
-                # ----------------------------------
-                
-                prompt_msg = (
-                    f"[SYSTEM_NOTIFICATION] Sir, the job application for '{title}' at '{company}' "
-                    f"has been compiled and is ready on screen. Ask the user out loud if they want to submit or skip it."
-                )
-                self.speak(prompt_msg)
+                if event_id != last_announced_event:
+                    last_announced_event = event_id
+                    company = pending.get("company", "a company")
+                    title = pending.get("title", "a role")
+                    location = pending.get("location", "")
+                    loc_text = f" in {location}" if location else ""
+                    
+                    # --- AUTOMATIC WAKE-UP SEQUENCE ---
+                    print(f"[ORION] 📢 Job received for {company} (stage: {stage})! Forcing UI wake-up...")
+                    
+                    # Trigger the UI to pop up from the background
+                    if hasattr(self, 'ui'):
+                        if hasattr(self.ui, 'bring_to_front'):
+                            try:
+                                self.ui.bring_to_front()
+                            except Exception:
+                                pass
+                        elif hasattr(self.ui, 'show'):
+                            try:
+                                self.ui.show()
+                            except Exception:
+                                pass
+                    # ----------------------------------
+                    
+                    if stage == "screen":
+                        prompt_msg = (
+                            f"[SYSTEM_NOTIFICATION] New job discovered: '{title}' at '{company}'{loc_text}. "
+                            f"This role has not been scraped yet. Ask the user out loud: "
+                            f"'Sir, I found an open role for {title} at {company}{loc_text}. Is this good to process?'"
+                        )
+                    else:
+                        prompt_msg = (
+                            f"[SYSTEM_NOTIFICATION] Application documents compiled: The tailored resume and cover letter "
+                            f"for '{title}' at '{company}' are ready on screen. Ask the user out loud: "
+                            f"'Sir, your tailored application for {title} at {company} is ready for review. Shall I open it?'"
+                        )
+                    self.speak(prompt_msg)
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -762,6 +781,9 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
+        voice_name = get_orion_voice()
+        print(f"[ORION] 🎙️ Voice: {voice_name}")
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
@@ -774,7 +796,7 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name=voice_name
                     )
                 )
             ),
@@ -822,32 +844,38 @@ class JarvisLive:
 
                 action = args.get("action", "").lower()
 
-                if action in ["approve", "yes", "send", "submit"]:
+                if action in ["approve", "yes", "send", "submit", "process"]:
                     job = bridge.get_pending_job()
                     if job:
-                        apply_url = job.get("apply_url", "").strip()
+                        stage = job.get("stage", "review")
+                        comp = job.get("company", "the company")
 
-                        if not apply_url or apply_url == "N/A":
-                            query = f"{job.get('company', '')} {job.get('title', '')} careers application"
-                            apply_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
+                        if stage == "screen":
+                            bridge.resolve_approval(True)
+                            result = f"Understood, sir. Starting to scrape and tailor your application for {comp}. I will notify you once the documents are compiled."
+                        else:
+                            apply_url = job.get("apply_url", "").strip()
 
-                        # 1. Open the job posting in your default web browser
-                        webbrowser.open(apply_url)
+                            if not apply_url or apply_url == "N/A":
+                                query = f"{job.get('company', '')} {job.get('title', '')} careers application"
+                                apply_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
 
-                        # 2. Open Pop!_OS file manager directly to the output folder containing your PDFs
-                        output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
-                        if os.path.exists(output_dir):
-                            subprocess.Popen(['xdg-open', output_dir])
+                            webbrowser.open(apply_url)
 
-                        # 3. Resolve the bridge so your pipeline logs it and proceeds
-                        bridge.resolve_approval(True)
-                        result = f"Confirmed. I have opened the application page for {job.get('company')} in your browser and opened your PDF output folder. You can complete the form using Simplify."
+                            output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
+                            if os.path.exists(output_dir):
+                                subprocess.Popen(['xdg-open', output_dir])
+
+                            bridge.resolve_approval(True)
+                            result = f"Confirmed. I have opened the application page and your tailored PDFs for {comp} on desktop."
                     else:
                         result = "No pending job application found to approve, sir."
 
                 else:
+                    job = bridge.get_pending_job()
+                    comp = job.get("company", "the position") if job else "the position"
                     bridge.resolve_approval(False)
-                    result = "Skipped application as requested, sir."
+                    result = f"Skipped {comp} as requested, sir."
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
@@ -1058,6 +1086,11 @@ class JarvisLive:
                                     break
                             self.set_speaking(False)
                             self.set_thinking(False)
+                            try:
+                                from actions.computer_settings import cancel_pending_dangerous_action
+                                cancel_pending_dangerous_action()
+                            except Exception:
+                                pass
 
                         if sc.output_transcription and sc.output_transcription.text:
                             self.set_thinking(False)

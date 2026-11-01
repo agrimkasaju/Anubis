@@ -171,13 +171,43 @@ def close_window():
     if _OS == "Darwin": pyautogui.hotkey("command", "w")
     else:               pyautogui.hotkey("ctrl", "w")
 
+_IS_FULLSCREEN = False
+
 def full_screen():
-    if _OS == "Darwin": pyautogui.hotkey("ctrl", "command", "f")
-    else:               pyautogui.press("f11")
+    global _IS_FULLSCREEN
+    if not _IS_FULLSCREEN:
+        if _OS == "Darwin":
+            pyautogui.hotkey("ctrl", "command", "f")
+        else:
+            pyautogui.press("f11")
+        _IS_FULLSCREEN = True
+
+def exit_full_screen():
+    global _IS_FULLSCREEN
+    if _IS_FULLSCREEN:
+        if _OS == "Darwin":
+            pyautogui.hotkey("ctrl", "command", "f")
+        else:
+            pyautogui.press("f11")
+        _IS_FULLSCREEN = False
+
+def toggle_full_screen():
+    global _IS_FULLSCREEN
+    if _OS == "Darwin":
+        pyautogui.hotkey("ctrl", "command", "f")
+    else:
+        pyautogui.press("f11")
+    _IS_FULLSCREEN = not _IS_FULLSCREEN
 
 def minimize_window():
-    if _OS == "Darwin": pyautogui.hotkey("command", "m")
-    else:               pyautogui.hotkey("win", "down")
+    if _OS == "Darwin":
+        pyautogui.hotkey("command", "m")
+    elif _OS == "Windows":
+        pyautogui.hotkey("win", "down")
+    else:
+        # Linux (COSMIC, GNOME, X11): Super+h minimizes on GNOME/COSMIC, Alt+F9 on X11
+        pyautogui.hotkey("super", "h")
+        pyautogui.hotkey("alt", "f9")
 
 def maximize_window():
     if _OS == "Darwin":
@@ -188,11 +218,9 @@ def maximize_window():
     elif _OS == "Windows":
         pyautogui.hotkey("win", "up")
     else:
-        try:
-            subprocess.run(["wmctrl", "-r", ":ACTIVE:", "-b", "add,maximized_vert,maximized_horz"],
-                capture_output=True)
-        except Exception:
-            pyautogui.hotkey("super", "up")
+        # COSMIC desktop uses Super+m; GNOME uses Super+Up
+        pyautogui.hotkey("super", "m")
+        pyautogui.hotkey("super", "up")
 
 def snap_left():
     if _OS == "Windows":
@@ -514,8 +542,14 @@ ACTION_MAP: dict[str, callable] = {
     "close_window":        close_window,
     "full_screen":         full_screen,
     "fullscreen":          full_screen,
+    "exit_fullscreen":     exit_full_screen,
+    "unfullscreen":        exit_full_screen,
+    "restore_fullscreen":  exit_full_screen,
+    "toggle_fullscreen":   toggle_full_screen,
     "minimize":            minimize_window,
+    "minimize_window":     minimize_window,
     "maximize":            maximize_window,
+    "maximize_window":     maximize_window,
     "snap_left":           snap_left,
     "snap_right":          snap_right,
     "switch_window":       switch_window,
@@ -561,6 +595,22 @@ ACTION_MAP: dict[str, callable] = {
 }
 
 _DANGEROUS_ACTIONS = {"restart", "shutdown"}
+_PENDING_CONFIRMATION: dict[str, float] = {}
+_LAST_DANGEROUS_CALL_TIME: float = 0.0
+_MIN_CONFIRMATION_DELAY: float = 1.5   # Human needs at least 1.5s to listen and verbally respond
+_MAX_CONFIRMATION_WINDOW: float = 30.0 # Confirmation expires after 30s
+_DEBOUNCE_INTERVAL: float = 1.5        # Drop rapid burst calls (< 1.5s)
+
+
+def cancel_pending_dangerous_action() -> str:
+    """Cancels any pending dangerous actions (shutdown/restart)."""
+    global _PENDING_CONFIRMATION
+    if _PENDING_CONFIRMATION:
+        actions = list(_PENDING_CONFIRMATION.keys())
+        _PENDING_CONFIRMATION.clear()
+        print(f"[Settings] Cancelled pending dangerous actions: {actions}")
+        return f"Cancelled pending {', '.join(actions)}."
+    return "No pending actions to cancel."
 
 
 def _detect_action(description: str) -> dict:
@@ -578,6 +628,7 @@ Rules:
 - For type_text: value is the exact text to type.
 - For press_key: value is the key name (e.g. "f5", "tab", "enter").
 - For reload_n: value is an integer.
+- NEVER map partial or ambiguous phrases ('turn', 'turn off', 'stop', 'shut') to 'shutdown' or 'restart'. Shutdown and restart require explicit intent to power off or reboot the entire machine.
 - Return ONLY the JSON, no explanation, no markdown."""
 
     try:
@@ -593,6 +644,8 @@ def computer_settings(
     player=None,
     session_memory=None,
 ) -> str:
+    global _LAST_DANGEROUS_CALL_TIME
+
     if not _PYAUTOGUI:
         return "pyautogui is not installed. Run: pip install pyautogui"
 
@@ -616,13 +669,59 @@ def computer_settings(
     if player:
         player.write_log(f"[Settings] {action}")
 
+    if action in ("cancel", "stop", "abort", "cancel_shutdown", "cancel_restart"):
+        return cancel_pending_dangerous_action()
+
     if action in _DANGEROUS_ACTIONS:
-        confirmed = str(params.get("confirmed", "")).lower()
-        if confirmed not in ("yes", "true", "1", "confirm"):
+        now = time.time()
+
+        # 1. Throttle / Debounce rapid-fire duplicate calls
+        if (now - _LAST_DANGEROUS_CALL_TIME) < _DEBOUNCE_INTERVAL:
+            print(f"[Settings] Debounced rapid duplicate call for {action}")
+            return f"Ignored: duplicate {action} request throttled. Please wait."
+        _LAST_DANGEROUS_CALL_TIME = now
+
+        # 2. Check confirmation argument
+        raw_confirmed = params.get("confirmed")
+        val_str = str(value or "").lower()
+        is_confirmed_arg = (
+            raw_confirmed is True
+            or str(raw_confirmed).lower() in ("yes", "true", "1", "confirm", "confirmed")
+            or val_str in ("yes", "true", "1", "confirm", "confirmed")
+        )
+
+        pending_time = _PENDING_CONFIRMATION.get(action)
+
+        # 3. Not confirmed or initial call: halt and require verbal user confirmation
+        if not is_confirmed_arg or pending_time is None:
+            _PENDING_CONFIRMATION[action] = now
+            print(f"[Settings] Dangerous action '{action}' requires verbal user confirmation.")
             return (
-                f"This will {action} the computer. "
-                f"Please confirm by calling again with confirmed=yes."
+                f"HALTED: Computer {action} requires explicit verbal confirmation from the user. "
+                f"Ask the user out loud: 'Are you sure you want to {action} the computer?' and STOP. "
+                f"DO NOT call any tool again until the user speaks and explicitly confirms in their next turn."
             )
+
+        # 4. If confirmed flag passed, enforce human-time gate
+        elapsed = now - pending_time
+        if elapsed < _MIN_CONFIRMATION_DELAY:
+            print(f"[Settings] Self-confirmation rejected for {action} (elapsed: {elapsed:.2f}s < {_MIN_CONFIRMATION_DELAY}s)")
+            return (
+                f"REJECTED: Automatic self-confirmation detected. "
+                f"A human user must verbally confirm after being asked."
+            )
+
+        if elapsed > _MAX_CONFIRMATION_WINDOW:
+            _PENDING_CONFIRMATION.pop(action, None)
+            print(f"[Settings] Confirmation window expired for {action} (elapsed: {elapsed:.2f}s)")
+            return (
+                f"Confirmation window for {action} expired ({int(elapsed)}s elapsed). "
+                f"Please ask the user again if they want to {action} the computer."
+            )
+
+        # 5. Verbal confirmation verified! Clear pending state and proceed to execute.
+        _PENDING_CONFIRMATION.pop(action, None)
+        print(f"[Settings] Verbal user confirmation verified for {action} ({elapsed:.2f}s elapsed). Proceeding with execution.")
 
     if action == "volume_set":
         try:

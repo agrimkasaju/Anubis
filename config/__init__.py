@@ -15,7 +15,7 @@ if _ENV_PATH.exists():
     except Exception:
         pass
 
-DEFAULT_GEMINI_MODEL      = "gemini-3.8-flash"
+DEFAULT_GEMINI_MODEL      = "gemini-4-argon"
 DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite"
 
 # Use a dedicated Live API endpoint for bidiGenerateContent:
@@ -49,3 +49,10 @@ def get_gemini_lite_model(default: str | None = None) -> str:
 
 def get_gemini_live_model(default: str | None = None) -> str:
     return os.getenv("GEMINI_LIVE_MODEL") or get_config().get("gemini_live_model") or default or DEFAULT_GEMINI_LIVE_MODEL
+
+
+DEFAULT_ORION_VOICE = "Orion"
+
+
+def get_orion_voice(default: str | None = None) -> str:
+    return os.getenv("ORION_VOICE") or get_config().get("orion_voice") or default or DEFAULT_ORION_VOICE
