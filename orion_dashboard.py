@@ -23,6 +23,7 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from fpdf import FPDF
 
 # --- DIRECTORY & ENVIRONMENT CONFIG ---
 BASE_DIR = Path(__file__).resolve().parent
@@ -338,9 +339,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
               <span id="res-ticker" class="text-xl font-bold font-mono text-white">NVDA</span>
               <div class="flex items-center space-x-2">
                 <span id="res-stance-badge" class="px-2.5 py-1 text-xs font-bold rounded-lg uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">BULLISH</span>
-                <button id="btn-share-stock" onclick="shareCurrentStock()" title="Share Analysis" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/80 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 shadow-sm">
-                  <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                  <span>Share</span>
+                <button id="btn-share-stock" onclick="shareStockPDF()" title="Download & Share PDF Report (0% IP/Port Leak)" class="px-2.5 py-1 bg-cyan-950/80 hover:bg-cyan-900/80 active:bg-cyan-800 text-cyan-300 hover:text-white border border-cyan-700/80 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 shadow-sm">
+                  <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                  <span>Share PDF</span>
                 </button>
               </div>
             </div>
@@ -737,6 +738,69 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       }
     }
 
+    async function shareStockPDF() {
+      if (!currentStockData || !currentStockData.symbol) {
+        showToast('No active stock analysis to share', '⚠️');
+        return;
+      }
+      const symbol = currentStockData.symbol.trim().toUpperCase();
+      const btn = document.getElementById('btn-share-stock');
+      const origHTML = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.innerHTML = '<span class="inline-block animate-spin mr-1">⌛</span><span>Building PDF...</span>';
+        btn.disabled = true;
+      }
+      showToast(`Building ${symbol} PDF (0% port/IP leak)...`, '📄');
+
+      try {
+        const tParam = token ? '&token=' + encodeURIComponent(token) : '';
+        const res = await fetch(`/api/stock/pdf?symbol=${encodeURIComponent(symbol)}${tParam}`);
+        if (!res.ok) throw new Error('PDF service returned ' + res.status);
+
+        const blob = await res.blob();
+        const filename = `${symbol}_Quantitative_Analysis.pdf`;
+        const file = new File([blob], filename, { type: 'application/pdf' });
+
+        let sharedNative = false;
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({
+              files: [file],
+              title: `${symbol} Quantitative Analysis`,
+            });
+            sharedNative = true;
+            showToast(`Shared ${filename} (zero ports/IPs leaked)`);
+          } catch (shareErr) {
+            if (shareErr.name === 'AbortError') {
+              sharedNative = true;
+            } else {
+              console.warn('Native PDF share failed, downloading instead:', shareErr);
+            }
+          }
+        }
+
+        if (!sharedNative) {
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 3000);
+          showToast(`Downloaded ${filename} (zero ports/IPs leaked)`);
+        }
+      } catch (err) {
+        console.error('PDF error:', err);
+        showToast('PDF generation failed: ' + err.message, '⚠️');
+      } finally {
+        if (btn) {
+          btn.innerHTML = origHTML;
+          btn.disabled = false;
+        }
+      }
+    }
+
     // Render Stock Card (Data + Graphical Candlestick Chart)
     function renderStockCard(data) {
       if (!data) return;
@@ -958,6 +1022,138 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 """
 
 
+def generate_stock_pdf(symbol: str) -> bytes | None:
+    symbol = symbol.strip().upper()
+    data = None
+    try:
+        req = urllib.request.Request("http://localhost:8000/api/history")
+        with urllib.request.urlopen(req, timeout=3) as res:
+            hist = json.loads(res.read().decode("utf-8"))
+            data = next((item for item in hist if item.get("ticker") == symbol), None)
+    except Exception:
+        pass
+
+    if not data:
+        try:
+            req = urllib.request.Request(f"http://localhost:8000/analyze/{symbol}")
+            with urllib.request.urlopen(req, timeout=60) as res:
+                data = json.loads(res.read().decode("utf-8"))
+        except Exception:
+            return None
+
+    if not data or "error" in data:
+        return None
+
+    class StockReportPDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 8)
+            self.set_text_color(100, 116, 139)
+            self.cell(0, 6, "QUANTITATIVE EQUITY RESEARCH REPORT", align="L")
+            self.set_font("Helvetica", "", 8)
+            self.cell(0, 6, "PUBLIC MARKET DATA", align="R")
+            self.ln(7)
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(148, 163, 184)
+            self.cell(0, 8, f"Page {self.page_no()}/{{nb}}  |  Confidential & Personal Use Only  |  No Server Ports or Private Telemetry", align="C")
+
+    pdf = StockReportPDF(orientation="P", unit="mm", format="A4")
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Title
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(0, 9, f"{symbol} - Technical & Quantitative Analysis", new_x="LMARGIN", new_y="NEXT")
+
+    # Date / Timestamp
+    ts = data.get("timestamp_str") or ""
+    if ts:
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(100, 116, 139)
+        pdf.cell(0, 5, f"Evaluation Date: {ts}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+    # Stance & Metrics
+    analysis_text = data.get("analysis", "")
+    is_bull = "BULLISH" in analysis_text
+    is_bear = "BEARISH" in analysis_text
+    stance = "BULLISH" if is_bull else ("BEARISH" if is_bear else "NEUTRAL")
+
+    pdf.set_font("Helvetica", "B", 11)
+    if stance == "BULLISH":
+        pdf.set_fill_color(220, 252, 231)
+        pdf.set_text_color(22, 101, 52)
+    elif stance == "BEARISH":
+        pdf.set_fill_color(254, 226, 226)
+        pdf.set_text_color(153, 27, 27)
+    else:
+        pdf.set_fill_color(254, 243, 199)
+        pdf.set_text_color(146, 64, 14)
+
+    pdf.cell(40, 8, f"  STANCE: {stance}  ", fill=True, border=1)
+    
+    pdf.set_font("Helvetica", "", 9.5)
+    pdf.set_text_color(30, 41, 59)
+    price = data.get("current_price", 0)
+    session = data.get("market_session", "Regular")
+    session_str = f" ({session})" if session != "Regular" else ""
+    reg_price = data.get("regular_price")
+    reg_str = f" | Reg Close: ${reg_price:.2f}" if (reg_price and session != "Regular") else ""
+    low = data.get("two_week_low", 0)
+    high = data.get("two_week_high", 0)
+    pdf.cell(0, 8, f"   Price: ${price:.2f}{session_str}{reg_str}   |   2-Wk Range: ${low:.2f} - ${high:.2f}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+
+    # Candlestick Chart
+    chart_file = f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart.png"
+    if not os.path.exists(chart_file):
+        try:
+            req_img = urllib.request.Request(f"http://localhost:8000/charts/{symbol}_chart.png")
+            with urllib.request.urlopen(req_img, timeout=4) as res_img:
+                tmp_chart = f"/tmp/{symbol}_pdf_chart.png"
+                with open(tmp_chart, "wb") as f_img:
+                    f_img.write(res_img.read())
+                chart_file = tmp_chart
+        except Exception:
+            chart_file = None
+
+    if chart_file and os.path.exists(chart_file):
+        pdf.set_font("Helvetica", "B", 10.5)
+        pdf.set_text_color(30, 41, 59)
+        pdf.cell(0, 5, "14-Day Candlestick & Volume Profile:", new_x="LMARGIN", new_y="NEXT")
+        pdf.image(chart_file, x=15, w=180)
+        pdf.ln(4)
+
+    # News Catalysts
+    news_summary = data.get("news_summary", "").strip()
+    if news_summary:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(15, 23, 42)
+        news_source = data.get("news_source", "News Catalysts")
+        pdf.cell(0, 7, f"Catalysts & Sentiment ({news_source}):", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(51, 65, 85)
+        clean_news = news_summary.encode("latin-1", "replace").decode("latin-1")
+        pdf.multi_cell(0, 4.5, clean_news)
+        pdf.ln(3)
+
+    # Technical Analysis
+    if analysis_text:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(15, 23, 42)
+        pdf.cell(0, 7, "Quantitative & Technical Assessment:", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(51, 65, 85)
+        clean_analysis = re.sub(r"\*\*", "", analysis_text).encode("latin-1", "replace").decode("latin-1")
+        pdf.multi_cell(0, 4.5, clean_analysis)
+
+    return bytes(pdf.output())
+
+
 class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _check_auth(self) -> bool:
@@ -1105,6 +1301,30 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             except Exception as e:
                 self._send_json({"error": f"Error reading PDF: {e}"}, status=500)
+                return
+
+        # API: Generate and Serve Stock Analysis PDF Report
+        if path == "/api/stock/pdf":
+            symbol = qs.get("symbol", [""])[0].strip().upper()
+            if not symbol or not re.match(r"^[A-Z0-9.-]{1,10}$", symbol):
+                self._send_json({"error": "Invalid ticker"}, status=400)
+                return
+            try:
+                pdf_bytes = generate_stock_pdf(symbol)
+                if not pdf_bytes:
+                    self._send_json({"error": f"Failed to generate PDF for {symbol}"}, status=404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/pdf")
+                self.send_header("Content-Length", str(len(pdf_bytes)))
+                self.send_header("Content-Disposition", f'attachment; filename="{symbol}_Quantitative_Analysis.pdf"')
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(pdf_bytes)
+                return
+            except Exception as e:
+                self._send_json({"error": f"PDF generation error: {e}"}, status=500)
                 return
 
         # API: Proxy Stock Chart Image
