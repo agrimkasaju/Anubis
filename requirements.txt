@@ -16,3 +16,4 @@ send2trash
 youtube-transcript-api
 pyaudio
 PyQt6
+fpdf2
