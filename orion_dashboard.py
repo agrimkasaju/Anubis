@@ -336,7 +336,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-2">
             <div class="flex items-center justify-between">
               <span id="res-ticker" class="text-xl font-bold font-mono text-white">NVDA</span>
-              <span id="res-stance-badge" class="px-2.5 py-1 text-xs font-bold rounded-lg uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">BULLISH</span>
+              <div class="flex items-center space-x-2">
+                <span id="res-stance-badge" class="px-2.5 py-1 text-xs font-bold rounded-lg uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">BULLISH</span>
+                <button id="btn-share-stock" onclick="shareCurrentStock()" title="Share Analysis" class="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 active:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700/80 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 shadow-sm">
+                  <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                  <span>Share</span>
+                </button>
+              </div>
             </div>
             <div class="flex items-baseline space-x-2">
               <span id="res-price" class="text-2xl font-bold text-white">$124.50</span>
@@ -600,9 +606,141 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
 
+    let currentStockData = null;
+
+    function showToast(msg, icon = '✓') {
+      const el = document.getElementById('toast-notify');
+      const msgEl = document.getElementById('toast-msg');
+      const iconEl = document.getElementById('toast-icon');
+      if (!el || !msgEl) return;
+      msgEl.innerText = msg;
+      if (iconEl) iconEl.innerText = icon;
+      el.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-2');
+      el.classList.add('opacity-100', 'translate-y-0');
+      setTimeout(() => {
+        el.classList.remove('opacity-100', 'translate-y-0');
+        el.classList.add('opacity-0', 'pointer-events-none', 'translate-y-2');
+      }, 2600);
+    }
+
+    function scrubSecurityInfo(str) {
+      if (!str) return '';
+      let s = String(str);
+      // 1. Strip full internal URLs (http or https with IP, localhost, or internal ports)
+      s = s.replace(/https?:\/\/(?:localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9.-]+\.ts\.net)(?::\d+)?(?:\/[^\s)]*)?/gi, '');
+      // 2. Strip standalone IPv4 addresses with optional port
+      s = s.replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/g, '');
+      // 3. Strip tailscale domain names
+      s = s.replace(/\b[a-zA-Z0-9.-]+\.ts\.net(?::\d+)?\b/gi, '');
+      // 4. Strip localhost
+      s = s.replace(/\blocalhost(?::\d+)?\b/gi, '');
+      // 5. Strip tokens / secrets
+      s = s.replace(/(?:[?&])?token[=:]\s*[a-zA-Z0-9_\-]+/gi, '');
+      s = s.replace(/Bearer\s+[a-zA-Z0-9_\-]+/gi, '');
+      // 6. Strip local absolute and file paths
+      s = s.replace(/(?:file:\/\/\/[^\s)'"]*|\/home\/[^\s)'"]*|\/tmp\/[^\s)'"]*)/gi, '');
+      // 7. Strip common internal ports if leftover
+      s = s.replace(/:(?:8000|8088|8080|5000|3000)\b/g, '');
+      // 8. Clean up extra whitespace and blank lines
+      s = s.replace(/[ \t]{2,}/g, ' ');
+      s = s.replace(/\n{3,}/g, '\n\n').trim();
+      return s;
+    }
+
+    function buildShareText(data) {
+      if (!data) return '';
+      const symbol = (data.symbol || data.ticker || '').trim().toUpperCase();
+      const rawStance = (data.stance || '').toUpperCase();
+      let stance = rawStance;
+      if (!stance || stance === 'NEUTRAL') {
+        const fullText = (data.raw_analysis || data.analysis || '');
+        if (fullText.includes('BULLISH')) stance = 'BULLISH';
+        else if (fullText.includes('BEARISH')) stance = 'BEARISH';
+        else stance = 'NEUTRAL';
+      }
+
+      const isBull = stance.includes('BULL') || stance.includes('BUY') || stance.includes('UP');
+      const isBear = stance.includes('BEAR') || stance.includes('SELL') || stance.includes('DOWN');
+      const stanceEmoji = isBull ? '🟢' : (isBear ? '🔴' : '🟡');
+
+      const priceNum = data.price !== undefined && data.price !== null ? Number(data.price) : (data.current_price !== undefined ? Number(data.current_price) : null);
+      const priceStr = priceNum !== null ? `$${priceNum.toFixed(2)}` : 'N/A';
+      
+      const session = (data.market_session && data.market_session !== 'Regular') ? ` (${data.market_session})` : '';
+      const regCloseNum = data.regular_price !== undefined && data.regular_price !== null ? Number(data.regular_price) : null;
+      const regCloseStr = (regCloseNum !== null && session) ? ` • Reg Close: $${regCloseNum.toFixed(2)}` : '';
+      
+      let rangeStr = data.range || '';
+      if (!rangeStr && data.two_week_low !== undefined && data.two_week_high !== undefined) {
+        rangeStr = `2-Wk: $${Number(data.two_week_low).toFixed(2)} - $${Number(data.two_week_high).toFixed(2)}`;
+      }
+
+      let text = `📈 ${symbol} Quantitative Analysis\n`;
+      text += `Verdict: ${stanceEmoji} ${stance}\n`;
+      text += `Price: ${priceStr}${session}${regCloseStr}\n`;
+      if (rangeStr) text += `${rangeStr}\n`;
+
+      const news = (data.news_call || data.news_summary || '').trim();
+      if (news && news.toLowerCase() !== 'neutral / none') {
+        text += `\n📰 Catalysts & Sentiment:\n${news}\n`;
+      }
+
+      const analysis = (data.raw_analysis || data.analysis || '').trim();
+      if (analysis) {
+        text += `\n📊 Technical Breakdown:\n${analysis}\n`;
+      }
+
+      text += `\n🔗 https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`;
+      return scrubSecurityInfo(text);
+    }
+
+    async function shareCurrentStock() {
+      if (!currentStockData || !currentStockData.symbol) {
+        showToast('No active stock analysis to share', '⚠️');
+        return;
+      }
+      const symbol = currentStockData.symbol.trim().toUpperCase();
+      const stance = currentStockData.stance || 'Analysis';
+      const title = `${symbol} Analysis - ${stance}`;
+      const text = buildShareText(currentStockData);
+      const publicUrl = `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`;
+
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: title,
+            text: text,
+            url: publicUrl
+          });
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') return;
+          console.warn('Native share failed, falling back to clipboard:', err);
+        }
+      }
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          showToast(`${symbol} analysis copied (security info stripped)`);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          showToast(`${symbol} analysis copied (security info stripped)`);
+        }
+      } catch (e) {
+        alert('Copy failed: ' + e);
+      }
+    }
+
     // Render Stock Card (Data + Graphical Candlestick Chart)
     function renderStockCard(data) {
       if (!data) return;
+      currentStockData = data;
       const card = document.getElementById('stock-result-card');
       card.classList.remove('hidden');
 
@@ -610,8 +748,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       document.getElementById('res-ticker').innerText = symbol;
       const badge = document.getElementById('res-stance-badge');
       const sessionBadge = document.getElementById('res-session-badge');
+      const shareBtn = document.getElementById('btn-share-stock');
 
       if (data.price !== null && data.price !== undefined) {
+        if (shareBtn) shareBtn.classList.remove('hidden');
         document.getElementById('res-price').innerText = '$' + Number(data.price).toFixed(2);
         if (data.market_session && data.market_session !== 'Regular') {
           const badgeText = data.market_session === 'Pre-Market' ? 'PRE' : 'AH';
@@ -647,6 +787,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
       } else {
         if (sessionBadge) sessionBadge.classList.add('hidden');
+        if (shareBtn) shareBtn.classList.add('hidden');
         document.getElementById('res-price').innerText = 'Symbol Not Found';
         document.getElementById('res-range').innerText = 'Check ticker spelling';
         badge.innerText = 'INVALID';
@@ -806,6 +947,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     pollJobBridge();
     pollPipelineStatus();
   </script>
+
+  <!-- Toast Notification -->
+  <div id="toast-notify" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-zinc-900 border border-zinc-700 text-zinc-100 rounded-xl text-xs font-medium shadow-2xl transition-all duration-300 opacity-0 pointer-events-none translate-y-2 flex items-center space-x-2">
+    <span id="toast-icon">✓</span>
+    <span id="toast-msg">Notification</span>
+  </div>
 </body>
 </html>
 """
@@ -1194,9 +1341,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     cmd.extend(["--title", title])
 
             env = os.environ.copy()
-            if API_KEYS_FILE.exists():
+            # Use ai_job_search's dedicated keys, NOT Anubis keys!
+            job_env_file = Path("/home/grim/Downloads/ai_job_search/.env")
+            job_keys_file = Path("/home/grim/Downloads/ai_job_search/ai_job_search/config/api_keys.json")
+            if job_env_file.exists():
                 try:
-                    k_data = json.loads(API_KEYS_FILE.read_text(encoding="utf-8"))
+                    for line in job_env_file.read_text(encoding="utf-8").splitlines():
+                        if "=" in line and not line.startswith("#"):
+                            k, v = line.split("=", 1)
+                            env[k.strip()] = v.strip().strip("'\"")
+                except Exception:
+                    pass
+            if job_keys_file.exists():
+                try:
+                    k_data = json.loads(job_keys_file.read_text(encoding="utf-8"))
                     if "gemini_api_key" in k_data:
                         env["GEMINI_API_KEY"] = k_data["gemini_api_key"]
                         env["GOOGLE_API_KEY"] = k_data["gemini_api_key"]
