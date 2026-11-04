@@ -370,6 +370,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div id="res-full-analysis" class="mt-2 text-zinc-400 whitespace-pre-wrap font-mono text-[11px] max-h-60 overflow-y-auto custom-scroll pt-2 border-t border-zinc-800"></div>
           </details>
 
+          <!-- AI Thinking Process & DDG Data Lineage Toggle -->
+          <details id="think-container" class="text-xs bg-zinc-950/50 border border-zinc-800 rounded-xl p-3 hidden">
+            <summary class="cursor-pointer font-medium text-cyan-400 hover:text-cyan-300">View AI Thinking Process & DDG Data Lineage</summary>
+            <div id="res-thinking" class="mt-2 text-zinc-400 whitespace-pre-wrap font-mono text-[11px] max-h-60 overflow-y-auto custom-scroll pt-2 border-t border-zinc-800"></div>
+          </details>
+
           <a id="stock-desktop-link" href="#" target="_blank" onclick="this.href=window.location.protocol+'//'+window.location.hostname+':8000'" class="block text-center py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs transition">
             Open Full Desktop Dashboard (Port 8000) ↗
           </a>
@@ -861,6 +867,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       }
 
       document.getElementById('res-full-analysis').innerText = data.raw_analysis || data.message || 'No breakdown available.';
+      const thinkBox = document.getElementById('think-container');
+      const thinkEl = document.getElementById('res-thinking');
+      if (thinkBox && thinkEl) {
+        if (data.thinking_process) {
+          thinkEl.innerText = data.thinking_process;
+          thinkBox.classList.remove('hidden');
+        } else {
+          thinkBox.classList.add('hidden');
+        }
+      }
     }
 
     // Execute Stock Analysis
@@ -1377,7 +1393,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "raw_analysis": an,
                         "chart_url": f"/api/stock/chart?ticker={t}",
                         "market_session": item.get("market_session", "Regular"),
-                        "regular_price": item.get("regular_price")
+                        "regular_price": item.get("regular_price"),
+                        "thinking_process": item.get("thinking_process") or ""
                     })
                 self._send_json(hist)
             except Exception:
@@ -1428,7 +1445,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "raw_analysis": analysis_str,
                     "chart_url": f"/api/stock/chart?ticker={symbol}",
                     "market_session": data.get("market_session", "Regular"),
-                    "regular_price": data.get("regular_price")
+                    "regular_price": data.get("regular_price"),
+                    "thinking_process": data.get("thinking_process") or ""
                 })
             except Exception as e:
                 self._send_json({"error": str(e)}, status=500)
