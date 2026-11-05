@@ -1442,10 +1442,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 rng = f"${low:.2f} - ${high:.2f}" if low is not None and high is not None else ""
                 local_summary = (data.get("news_summary") or "").strip()
 
-                m_stance = re.search(r"Final Operational Stance:\s*\*?([^\n*]+)", analysis_str)
-                if not m_stance:
-                    m_stance = re.search(r"FINAL OPERATIONAL VERDICT:\s*([^\n]+)", analysis_str)
-                stance = m_stance.group(1).strip() if m_stance else "NEUTRAL"
+                m_stance = re.search(r"(?:Final Operational Stance|FINAL OPERATIONAL VERDICT|Stance):\s*\*?([A-Za-z -]+)", analysis_str, re.IGNORECASE)
+                stance = m_stance.group(1).strip().upper() if m_stance else ("BULLISH" if "BULLISH" in analysis_str else "BEARISH" if "BEARISH" in analysis_str else "NEUTRAL")
 
                 self._send_json({
                     "symbol": symbol,
