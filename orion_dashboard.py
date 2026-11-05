@@ -833,7 +833,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         } else {
           if (sessionBadge) sessionBadge.classList.add('hidden');
         }
-        document.getElementById('res-range').innerText = data.range ? '2-Wk: ' + data.range : '';
+        const smaText = (data.sma_50 ? ' | 50-SMA: $' + Number(data.sma_50).toFixed(2) : '') + (data.sma_200 ? ' | 200-SMA: $' + Number(data.sma_200).toFixed(2) : '');
+        document.getElementById('res-range').innerText = (data.range ? '2-Wk: ' + data.range : '') + smaText;
         const stance = (data.stance || 'NEUTRAL').toUpperCase();
         badge.innerText = stance;
         if (stance.includes('BULL') || stance.includes('BUY') || stance.includes('UP')) {
@@ -1121,7 +1122,15 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     reg_str = f" | Reg Close: ${reg_price:.2f}" if (reg_price and session != "Regular") else ""
     low = data.get("two_week_low", 0)
     high = data.get("two_week_high", 0)
-    pdf.cell(0, 8, f"   Price: ${price:.2f}{session_str}{reg_str}   |   2-Wk Range: ${low:.2f} - ${high:.2f}", new_x="LMARGIN", new_y="NEXT")
+    sma_50 = data.get("sma_50")
+    sma_200 = data.get("sma_200")
+    sma_parts = []
+    if sma_50:
+        sma_parts.append(f"50-SMA: ${sma_50:.2f}")
+    if sma_200:
+        sma_parts.append(f"200-SMA: ${sma_200:.2f}")
+    sma_str = f"   |   {' | '.join(sma_parts)}" if sma_parts else ""
+    pdf.cell(0, 8, f"   Price: ${price:.2f}{session_str}{reg_str}   |   2-Wk Range: ${low:.2f} - ${high:.2f}{sma_str}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
 
     # Candlestick Chart
@@ -1394,6 +1403,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "chart_url": f"/api/stock/chart?ticker={t}",
                         "market_session": item.get("market_session", "Regular"),
                         "regular_price": item.get("regular_price"),
+                        "sma_50": item.get("sma_50"),
+                        "sma_200": item.get("sma_200"),
                         "thinking_process": item.get("thinking_process") or ""
                     })
                 self._send_json(hist)
@@ -1446,6 +1457,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "chart_url": f"/api/stock/chart?ticker={symbol}",
                     "market_session": data.get("market_session", "Regular"),
                     "regular_price": data.get("regular_price"),
+                    "sma_50": data.get("sma_50"),
+                    "sma_200": data.get("sma_200"),
                     "thinking_process": data.get("thinking_process") or ""
                 })
             except Exception as e:
