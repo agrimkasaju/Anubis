@@ -34,13 +34,13 @@ _RELATIVE_MAP_KEYS = {
 
 
 def _parse_date(raw: str) -> str:
-
     raw   = raw.strip()
     lower = raw.lower()
     today = datetime.now()
 
-    if re.match(r"\d{4}-\d{2}-\d{2}", raw):
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
         return raw
+
     for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
@@ -55,20 +55,16 @@ def _parse_date(raw: str) -> str:
     for key, val in relative.items():
         if key in lower:
             return val.strftime("%Y-%m-%d")
-# replace the try/except genai block with:
+
+    # Clean conversational modifiers like "around", "close to", "about", "for", "on"
+    cleaned = re.sub(r"(?i)\b(around|close to|about|on|for|from|to|near)\b", "", raw).strip()
     try:
-        from or_client import client
-        result = client.chat(
-            f"Today is {today.strftime('%Y-%m-%d')}. "
-            f"Convert this date expression to YYYY-MM-DD: '{raw}'. "
-            f"Return ONLY the date string, nothing else.",
-            system="You are a date converter. Return only the YYYY-MM-DD string."
-        )
-        result = result.strip()
-        if re.match(r"\d{4}-\d{2}-\d{2}", result):
-            return result
-    except Exception as e:
-        print(f"[FlightFinder] ⚠️ date parse failed: {e}")
+        from dateutil import parser as dt_parser
+        dt = dt_parser.parse(cleaned, fuzzy=True, default=today)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
     for month_name, month_num in _MONTH_MAP.items():
         if month_name in lower:
             day_match = re.search(r"\d{1,2}", raw)
@@ -77,7 +73,6 @@ def _parse_date(raw: str) -> str:
                 year = today.year if month_num >= today.month else today.year + 1
                 return f"{year}-{month_num:02d}-{day:02d}"
 
-    # Last resort: today
     print(f"[FlightFinder] ⚠️ Could not parse date '{raw}' — using today.")
     return today.strftime("%Y-%m-%d")
 
@@ -133,10 +128,46 @@ def _search_flights_browser(
 
     print(f"[FlightFinder] 🌐 Opening: {url}")
     browser_control({"action": "go_to", "url": url})
-    time.sleep(5)
+    time.sleep(4)
 
-    raw = browser_control({"action": "get_text"})
+    raw = browser_control({"action": "get_text", "max_chars": 15000})
+    if "results returned" not in raw and "Top departing flights" not in raw and "departing flights" not in raw:
+        time.sleep(2)
+        raw = browser_control({"action": "get_text", "max_chars": 15000})
+
     return (raw or ""), url
+
+
+def _parse_flights_regex(raw_text: str) -> list[dict]:
+    pattern = re.compile(
+        r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*[–\-—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*\n+"
+        r"([^\n]+)\s*\n+"
+        r"(\d+\s*h[r]?\s*(?:\d+\s*m(?:in)?)?)\s*\n+"
+        r"[^\n]+\s*\n+"
+        r"(Nonstop|\d+\s*stop[s]?)"
+        r"(?:.*?\n+)*?"
+        r"(\$\d+)",
+        re.MULTILINE
+    )
+    flights = []
+    for m in pattern.finditer(raw_text):
+        dep, arr, airline, dur, stops, price = m.groups()
+        airline_clean = airline.split("Operated")[0].strip()
+        stop_count = 0 if "nonstop" in stops.lower() else int(re.search(r"\d+", stops).group() if re.search(r"\d+", stops) else 1)
+        flights.append({
+            "airline": airline_clean,
+            "departure": dep.strip(),
+            "arrival": arr.strip(),
+            "duration": dur.strip(),
+            "stops": stop_count,
+            "price": price.strip(),
+            "currency": "USD"
+        })
+        if len(flights) >= 5:
+            break
+    return flights
+
+
 def _parse_flights_with_gemini(
     raw_text:    str,
     origin:      str,
@@ -148,32 +179,43 @@ def _parse_flights_with_gemini(
     prompt = (
         f"Extract flight options from {origin} to {destination} on {date} "
         f"from this Google Flights page text:\n\n{raw_text[:12000]}\n\n"
-        f"Return a JSON array of up to 5 flights:\n"
-        f'[{{"airline":"...","departure":"HH:MM","arrival":"HH:MM",'
-        f'"duration":"Xh Ym","stops":0,"price":"...","currency":"USD"}}]\n'
-        f"If no flights found, return: []"
+        f"Return ONLY a JSON object with this exact structure:\n"
+        f'{{"flights": [{{"airline":"...","departure":"HH:MM","arrival":"HH:MM",'
+        f'"duration":"Xh Ym","stops":0,"price":"...","currency":"USD"}}]}}\n'
+        f'If no flights found, return: {{"flights": []}}'
     )
 
     try:
-        result = client.chat_json(prompt, system="Return only valid JSON. No extra text.")
-        return result if isinstance(result, list) else []
+        result = client.chat_json(prompt, system="Return only valid JSON object. No extra text.")
+        flights = result.get("flights") if isinstance(result, dict) else (result if isinstance(result, list) else [])
+        if flights:
+            return flights
     except Exception as e:
         print(f"[FlightFinder] ⚠️ parse failed: {e}")
-        return []
+
+    # Fallback to direct regex parser
+    fallback = _parse_flights_regex(raw_text)
+    if fallback:
+        print(f"[FlightFinder] ✈️ Regex fallback found {len(fallback)} flights")
+        return fallback
+
+    return []
 
 def _format_spoken(
     flights:     list[dict],
     origin:      str,
     destination: str,
     date:        str,
+    return_date: str | None = None,
 ) -> str:
+    trip_desc = f"{origin} to {destination} on {date}" + (f" returning {return_date}" if return_date else "")
     if not flights:
         return (
-            f"I couldn't find any flights from {origin} to {destination} "
-            f"on {date}, sir. The page may not have loaded correctly."
+            f"I couldn't find any flights for {trip_desc}, sir. "
+            f"The page may not have loaded correctly."
         )
 
-    lines = [f"Here are the top flights from {origin} to {destination} on {date}, sir."]
+    lines = [f"Here are the top flights for {trip_desc}, sir."]
 
     for i, f in enumerate(flights[:5], 1):
         airline   = f.get("airline",   "Unknown airline")
@@ -296,6 +338,17 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     date        = _parse_date(date_raw)
     return_date = _parse_date(return_raw) if return_raw else None
 
+    # Handle year rollover for return trips (e.g. Dec 19 -> Jan 3)
+    if return_date and date:
+        try:
+            dep_dt = datetime.strptime(date, "%Y-%m-%d")
+            ret_dt = datetime.strptime(return_date, "%Y-%m-%d")
+            if ret_dt < dep_dt:
+                ret_dt = ret_dt.replace(year=dep_dt.year + 1)
+                return_date = ret_dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
     if player:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
 
@@ -320,7 +373,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
             speak("Analysing the results now, sir.")
 
         flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
-        spoken  = _format_spoken(flights, origin, destination, date)
+        spoken  = _format_spoken(flights, origin, destination, date, return_date)
 
         if speak:
             speak(spoken)

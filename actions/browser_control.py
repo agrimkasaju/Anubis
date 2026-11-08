@@ -1,10 +1,17 @@
+import os
+from pathlib import Path
+
+# Persist Playwright browser binaries inside project directory so OS cache clears do not wipe them
+_DEFAULT_BROWSERS_DIR = Path(__file__).resolve().parent.parent / ".playwright-browsers"
+if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_DEFAULT_BROWSERS_DIR)
+
 import asyncio
 import threading
 import concurrent.futures
 import platform
 import shutil
 import subprocess
-from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 
@@ -336,11 +343,11 @@ class _BrowserThread:
         except Exception as e:
             return f"Key error: {e}"
 
-    async def _get_text(self) -> str:
+    async def _get_text(self, max_chars: int = 4000) -> str:
         page = await self._get_page()
         try:
             text = await page.inner_text("body")
-            return text[:4000] if len(text) > 4000 else text
+            return text[:max_chars] if len(text) > max_chars else text
         except Exception as e:
             return f"Could not get page text: {e}"
 
@@ -510,7 +517,7 @@ def browser_control(
             ))
 
         elif action == "get_text":
-            result = _bt.run(_bt._get_text())
+            result = _bt.run(_bt._get_text(max_chars=int(parameters.get("max_chars", 4000))))
 
         elif action == "press":
             result = _bt.run(_bt._press(parameters.get("key", "Enter")))
