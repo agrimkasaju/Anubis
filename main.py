@@ -500,13 +500,15 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
+                "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
+                "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
+                "date":         {"type": "STRING",  "description": "Departure date (any format)"},
+                "return_date":  {"type": "STRING",  "description": "Return date for round trips"},
+                "passengers":   {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
+                "cabin":        {"type": "STRING",  "description": "economy | premium | business | first"},
+                "carry_on":     {"type": "INTEGER", "description": "Number of carry-on bags requested (e.g. 1)"},
+                "checked_bags": {"type": "INTEGER", "description": "Number of checked bags requested (e.g. 1)"},
+                "save":         {"type": "BOOLEAN", "description": "Save results to Notepad"},
             },
             "required": ["origin", "destination", "date"]
         }

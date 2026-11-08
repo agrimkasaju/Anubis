@@ -126,6 +126,8 @@ def _parse_flight_card(aria: str, raw_text: str) -> dict:
         "separate_tickets": False,
         "layover": "",
         "arrival_date": "",
+        "carry_on": None,
+        "checked_bags": None,
     }
 
     combined = (aria + " " + raw_text).lower()
@@ -173,6 +175,14 @@ def _parse_flight_card(aria: str, raw_text: str) -> dict:
         if laym:
             flight["layover"] = "; ".join(laym)
 
+        # Baggage allowance extraction from aria-label
+        carry = re.search(r"(\d+)\s+carry-on\s+bag", aria, re.IGNORECASE)
+        checked = re.search(r"(\d+)\s+checked\s+bag", aria, re.IGNORECASE)
+        if carry:
+            flight["carry_on"] = int(carry.group(1))
+        if checked:
+            flight["checked_bags"] = int(checked.group(1))
+
     # Fallback to raw text parsing for missing values
     if not flight["departure"] or not flight["airline"]:
         time_m = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*[–\-—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)(?:\+\d+)?)", raw_text)
@@ -195,13 +205,53 @@ def _parse_flight_card(aria: str, raw_text: str) -> dict:
     return flight
 
 
+async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> None:
+    if carry_on <= 0 and checked_bags <= 0:
+        return
+
+    btn = None
+    for _ in range(6):
+        btn = await page.query_selector('button[aria-label*="Bags"]')
+        if btn:
+            break
+        await asyncio.sleep(0.5)
+
+    if not btn:
+        print("[FlightFinder] ⚠️ Bags filter button not found.")
+        return
+
+    print(f"[FlightFinder] 🧳 Applying bag filters: {carry_on} carry-on, {checked_bags} checked bag(s)...")
+    await btn.click()
+    await asyncio.sleep(0.5)
+
+    if carry_on > 0:
+        add_carry = await page.query_selector('button[aria-label="Add carry-on bag"]')
+        for _ in range(carry_on):
+            if add_carry:
+                await add_carry.click()
+                await asyncio.sleep(0.2)
+
+    if checked_bags > 0:
+        add_checked = await page.query_selector('button[aria-label="Add checked bag"]')
+        for _ in range(checked_bags):
+            if add_checked:
+                await add_checked.click()
+                await asyncio.sleep(0.2)
+
+    await page.keyboard.press("Escape")
+    # Wait for Google Flights to re-sort results with bag fees included
+    await asyncio.sleep(1.5)
+
+
 async def _scrape_flights_async(
-    origin:      str,
-    destination: str,
-    date:        str,
-    return_date: str | None,
-    passengers:  int,
-    cabin:       str,
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None,
+    passengers:   int,
+    cabin:        str,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
 ) -> tuple[list[dict], list[dict], str, str]:
     _ensure_started()
     page = await _bt._get_page()
@@ -216,6 +266,10 @@ async def _scrape_flights_async(
         cards = await page.query_selector_all("li.pIav2d")
         if cards:
             break
+
+    # Apply bag filters if requested by user
+    if carry_on > 0 or checked_bags > 0:
+        await _apply_bag_filters(page, carry_on, checked_bags)
 
     cards = await page.query_selector_all("li.pIav2d")
     outbound: list[dict] = []
@@ -318,12 +372,14 @@ def _parse_flights_with_gemini(
 
 
 def _format_spoken(
-    outbound:    list[dict],
-    returning:   list[dict],
-    origin:      str,
-    destination: str,
-    date:        str,
-    return_date: str | None = None,
+    outbound:     list[dict],
+    returning:    list[dict],
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
 ) -> str:
     trip_desc = f"{origin} to {destination} on {date}" + (f" returning {return_date}" if return_date else "")
     if not outbound:
@@ -332,9 +388,18 @@ def _format_spoken(
             f"The page may not have loaded correctly."
         )
 
+    # Baggage description phrasing
+    bag_desc = ""
+    if carry_on > 0 and checked_bags > 0:
+        bag_desc = f" with {carry_on} carry-on and {checked_bags} checked bag{'s' if checked_bags > 1 else ''} included"
+    elif carry_on > 0:
+        bag_desc = f" with {carry_on} carry-on bag{'s' if carry_on > 1 else ''} included"
+    elif checked_bags > 0:
+        bag_desc = f" with {checked_bags} checked bag{'s' if checked_bags > 1 else ''} included"
+
     # ONE-WAY TRIP
     if not return_date or not returning:
-        lines = [f"Here are the top one-way flights from {origin} to {destination} on {date}, sir."]
+        lines = [f"Here are the top one-way flights from {origin} to {destination} on {date}{bag_desc}, sir."]
         for i, f in enumerate(outbound[:3], 1):
             airline   = f.get("airline",   "Unknown airline")
             departure = f.get("departure", "--:--")
@@ -348,9 +413,17 @@ def _format_spoken(
             price_str = f"{price} {currency}".strip() if price else "price unavailable"
             dur_str   = f", {duration}" if duration else ""
 
+            # Check if basic economy lacks carry-on
+            bag_note = ""
+            if carry_on == 0 and checked_bags == 0:
+                if f.get("carry_on") == 0:
+                    bag_note = " (basic fare, no carry-on included)"
+                elif f.get("carry_on") == 1:
+                    bag_note = " (1 carry-on included)"
+
             lines.append(
                 f"Option {i}: {airline}, departing {departure}, "
-                f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+                f"arriving {arrival}{dur_str}, {stop_str}, {price_str}{bag_note}."
             )
 
         priced = [f for f in outbound if f.get("price")]
@@ -366,7 +439,7 @@ def _format_spoken(
         return " ".join(lines)
 
     # ROUND-TRIP
-    lines = [f"Here are the flight options for a round trip from {origin} to {destination}, departing {date} and returning {return_date}, sir."]
+    lines = [f"Here are the flight options for a round trip from {origin} to {destination}, departing {date} and returning {return_date}{bag_desc}, sir."]
     out0 = outbound[0]
     out_stops = "non-stop" if out0.get("stops", 0) == 0 else f"{out0.get('stops')} stop{'s' if out0.get('stops', 0) > 1 else ''}"
     lines.append(
@@ -409,26 +482,30 @@ def _format_spoken(
 
 
 def _format_text_report(
-    outbound:    list[dict],
-    returning:   list[dict],
-    origin:      str,
-    destination: str,
-    date:        str,
-    return_date: str | None,
-    page_url:    str,
+    outbound:     list[dict],
+    returning:    list[dict],
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None,
+    page_url:     str,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
 ) -> str:
+    bag_filter_str = f"{carry_on} carry-on, {checked_bags} checked" if (carry_on or checked_bags) else "None (Base fare)"
     lines = [
         "JARVIS — Flight Search Results",
         "─" * 50,
-        f"Trip Type : {'Round Trip' if return_date else 'One Way'}",
-        f"Route     : {origin} → {destination}",
-        f"Departure : {date}",
+        f"Trip Type      : {'Round Trip' if return_date else 'One Way'}",
+        f"Route          : {origin} → {destination}",
+        f"Departure      : {date}",
     ]
     if return_date:
-        lines.append(f"Return    : {return_date}")
+        lines.append(f"Return         : {return_date}")
     lines += [
-        f"Searched  : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"Source    : {page_url}",
+        f"Baggage Filter : {bag_filter_str}",
+        f"Searched       : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Source         : {page_url}",
         "─" * 50,
         "",
     ]
@@ -441,6 +518,8 @@ def _format_text_report(
     for i, f in enumerate(outbound, 1):
         stops    = f.get("stops", 0)
         stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+        c_bag = f"{f.get('carry_on')} carry-on" if f.get('carry_on') is not None else "N/A"
+        chk_bag = f"{f.get('checked_bags')} checked" if f.get('checked_bags') is not None else "N/A"
         lines += [
             f"Flight {i}:",
             f"  Airline   : {f.get('airline',   'N/A')}",
@@ -448,6 +527,7 @@ def _format_text_report(
             f"  Arrival   : {f.get('arrival',   'N/A')}",
             f"  Duration  : {f.get('duration',  'N/A')}",
             f"  Stops     : {stop_str}",
+            f"  Baggage   : {c_bag}, {chk_bag}",
             f"  Price     : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
             "",
         ]
@@ -459,6 +539,8 @@ def _format_text_report(
             stops    = f.get("stops", 0)
             stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
             sep_str  = " [Separate Tickets]" if f.get("separate_tickets") else ""
+            c_bag = f"{f.get('carry_on')} carry-on" if f.get('carry_on') is not None else "N/A"
+            chk_bag = f"{f.get('checked_bags')} checked" if f.get('checked_bags') is not None else "N/A"
             lines += [
                 f"Option {i}{sep_str}:",
                 f"  Airline       : {f.get('airline',   'N/A')}",
@@ -466,6 +548,7 @@ def _format_text_report(
                 f"  Arrival       : {f.get('arrival',   'N/A')}",
                 f"  Duration      : {f.get('duration',  'N/A')}",
                 f"  Stops         : {stop_str}",
+                f"  Baggage       : {c_bag}, {chk_bag}",
                 f"  Total RT Fare : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
             ]
             if f.get("layover"):
@@ -509,6 +592,18 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     cabin       = params.get("cabin", "economy").strip().lower()
     save        = bool(params.get("save", False))
 
+    # Parse baggage requirements
+    carry_on     = max(0, int(params.get("carry_on") or params.get("carryon") or 0))
+    checked_bags = max(0, int(params.get("checked_bags") or params.get("checked_bag") or params.get("checked") or 0))
+    bags_raw     = str(params.get("bags") or "").lower()
+    if "both" in bags_raw:
+        carry_on     = max(carry_on, 1)
+        checked_bags = max(checked_bags, 1)
+    elif "carry" in bags_raw:
+        carry_on = max(carry_on, 1)
+    elif "check" in bags_raw:
+        checked_bags = max(checked_bags, 1)
+
     if not origin or not destination:
         return "Please provide both origin and destination, sir."
     if not date_raw:
@@ -531,8 +626,9 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         except Exception:
             pass
 
+    bag_log = f" | bags: {carry_on} carry-on, {checked_bags} checked" if (carry_on or checked_bags) else ""
     if player:
-        log_msg = f"[FlightFinder] {origin} → {destination} ({date} to {return_date})" if return_date else f"[FlightFinder] {origin} → {destination} on {date}"
+        log_msg = f"[FlightFinder] {origin} → {destination} ({date} to {return_date}){bag_log}" if return_date else f"[FlightFinder] {origin} → {destination} on {date}{bag_log}"
         player.write_log(log_msg)
 
     if speak:
@@ -542,7 +638,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
         f"{' → ' + return_date if return_date else ''}"
-        f" | {cabin} | {passengers} pax"
+        f" | {cabin} | {passengers} pax{bag_log}"
     )
 
     try:
@@ -554,7 +650,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         try:
             _ensure_started()
             outbound, returning, page_url, raw_text = _bt.run(
-                _scrape_flights_async(origin, destination, date, return_date, passengers, cabin),
+                _scrape_flights_async(origin, destination, date, return_date, passengers, cabin, carry_on, checked_bags),
                 timeout=35
             )
         except Exception as scrape_err:
@@ -572,7 +668,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         if not outbound and not raw_text:
             return "Could not retrieve flight data, sir. The page may not have loaded."
 
-        spoken = _format_spoken(outbound, returning, origin, destination, date, return_date)
+        spoken = _format_spoken(outbound, returning, origin, destination, date, return_date, carry_on, checked_bags)
 
         if speak:
             speak(spoken)
@@ -580,7 +676,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         result = spoken
 
         if save and outbound:
-            report     = _format_text_report(outbound, returning, origin, destination, date, return_date, page_url)
+            report     = _format_text_report(outbound, returning, origin, destination, date, return_date, page_url, carry_on, checked_bags)
             saved_path = _save_to_desktop(report, origin, destination)
             result    += f" Results saved to Desktop: {saved_path}"
 

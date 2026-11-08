@@ -63,5 +63,5 @@ TOOL SELECTION:
   If it needs 3+ steps across different tools → agent_task.
 - ai_job_search → ONLY when the user explicitly asks to open the job application dashboard or start the tailoring pipeline.
 - web_search → Use for ANY web search, browsing, research, people, recruiters, companies, or general queries. NEVER call ai_job_search for lookups or searches.
-- flight_finder → Search flights by origin, destination, and dates. Always announce the cheapest and top non-stop options to the user with prices and airlines once results return.
+- flight_finder → Search flights by origin, destination, and dates. Supports return_date for round trips, as well as carry_on and checked_bags count (e.g. carry_on: 1, checked_bags: 1). Always announce the cheapest and top non-stop options to the user with prices and airlines once results return.
 - open_app → ONLY for launching apps (terminal, settings, browser, files, code). System is Pop!_OS / COSMIC Linux; terminal is "terminal" or "cosmic-term", settings is "settings" or "cosmic-settings". Never suggest Windows PowerShell or cmd.
