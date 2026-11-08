@@ -1,12 +1,15 @@
 #flight_finder.py
+import asyncio
 import json
 import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from config import is_windows, is_mac, is_linux
+from actions.browser_control import _bt, _ensure_started, browser_control
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -18,7 +21,6 @@ BASE_DIR        = _get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 _MONTH_MAP: dict[str, int] = {
-
     "january": 1, "february": 2, "march": 3,     "april": 4,
     "may": 5,     "june": 6,     "july": 7,       "august": 8,
     "september": 9, "october": 10, "november": 11, "december": 12,
@@ -76,12 +78,14 @@ def _parse_date(raw: str) -> str:
     print(f"[FlightFinder] ⚠️ Could not parse date '{raw}' — using today.")
     return today.strftime("%Y-%m-%d")
 
+
 _CABIN_CODE: dict[str, str] = {
     "economy":  "1",
     "premium":  "2",
     "business": "3",
     "first":    "4",
 }
+
 
 def _build_google_flights_url(
     origin:      str,
@@ -91,17 +95,14 @@ def _build_google_flights_url(
     passengers:  int        = 1,
     cabin:       str        = "economy",
 ) -> str:
-    from urllib.parse import quote_plus
-
     cabin_code = _CABIN_CODE.get(cabin.lower(), "1")
-
     origin_enc      = quote_plus(origin)
     destination_enc = quote_plus(destination)
 
     if return_date:
-        trip = f"Flights+from+{origin_enc}+to+{destination_enc}+on+{date}+returning+{return_date}"
+        trip = f"Round+trip+flights+from+{origin_enc}+to+{destination_enc}+on+{date}+returning+{return_date}"
     else:
-        trip = f"Flights+from+{origin_enc}+to+{destination_enc}+on+{date}"
+        trip = f"One+way+flights+from+{origin_enc}+to+{destination_enc}+on+{date}"
 
     return (
         f"https://www.google.com/travel/flights"
@@ -111,31 +112,145 @@ def _build_google_flights_url(
         f"&adults={passengers}"
     )
 
-def _search_flights_browser(
+
+def _parse_flight_card(aria: str, raw_text: str) -> dict:
+    flight = {
+        "airline": "",
+        "departure": "",
+        "arrival": "",
+        "duration": "",
+        "stops": 0,
+        "price": "",
+        "currency": "USD",
+        "is_round_trip": False,
+        "separate_tickets": False,
+        "layover": "",
+        "arrival_date": "",
+    }
+
+    combined = (aria + " " + raw_text).lower()
+    if "separate tickets" in combined:
+        flight["separate_tickets"] = True
+    if "round trip" in combined:
+        flight["is_round_trip"] = True
+
+    if aria:
+        # Price extraction: e.g. "From 656 US dollars" or "From 656 Canadian dollars"
+        pm = re.search(r"From\s+(\d[\d,]*)\s+([A-Za-z]+)\s+dollars", aria, re.IGNORECASE)
+        if pm:
+            flight["price"] = f"${pm.group(1)}"
+            curr = pm.group(2).upper()
+            flight["currency"] = "CAD" if "CANADIAN" in curr else "USD"
+        else:
+            pm2 = re.search(r"[$€£](\d[\d,]*)", aria)
+            if pm2:
+                flight["price"] = f"${pm2.group(1)}"
+
+        # Stops & Airline: e.g. "Nonstop flight with WestJet." or "2 stops flight with Air Canada."
+        am = re.search(r"(Nonstop|\d+\s+stops?)\s+flight with\s+([^.]+?)(?:\.|$)", aria, re.IGNORECASE)
+        if am:
+            stops_str = am.group(1)
+            flight["stops"] = 0 if "nonstop" in stops_str.lower() else int(re.search(r"\d+", stops_str).group())
+            flight["airline"] = am.group(2).strip()
+
+        # Departure & Arrival times
+        dm = re.search(r"Leaves\s+.*?\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))", aria)
+        if dm:
+            flight["departure"] = dm.group(1).strip()
+        arm = re.search(r"arrives\s+.*?\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))(?:\s+on\s+([A-Za-z]+,\s+[A-Za-z]+\s+\d+))?", aria)
+        if arm:
+            flight["arrival"] = arm.group(1).strip()
+            if arm.group(2):
+                flight["arrival_date"] = arm.group(2).strip()
+
+        # Total duration
+        durm = re.search(r"Total duration\s+([^.]+?)(?:\.|$)", aria)
+        if durm:
+            flight["duration"] = durm.group(1).strip()
+
+        # Layovers
+        laym = re.findall(r"(\d+\s*hr(?:\s*\d+\s*min)?\s*layover\s+at\s+[^.]+)", aria, re.IGNORECASE)
+        if laym:
+            flight["layover"] = "; ".join(laym)
+
+    # Fallback to raw text parsing for missing values
+    if not flight["departure"] or not flight["airline"]:
+        time_m = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*[–\-—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)(?:\+\d+)?)", raw_text)
+        if time_m:
+            flight["departure"] = flight["departure"] or time_m.group(1).strip()
+            flight["arrival"] = flight["arrival"] or time_m.group(2).strip()
+
+        dur_m = re.search(r"(\d+\s*h[r]?\s*(?:\d+\s*m(?:in)?)?)", raw_text)
+        if dur_m:
+            flight["duration"] = flight["duration"] or dur_m.group(1).strip()
+
+        stops_m = re.search(r"(Nonstop|\d+\s*stop[s]?)", raw_text, re.IGNORECASE)
+        if stops_m:
+            flight["stops"] = 0 if "nonstop" in stops_m.group(1).lower() else int(re.search(r"\d+", stops_m.group(1)).group())
+
+        price_m = re.search(r"(\$\d[\d,]*)", raw_text)
+        if price_m:
+            flight["price"] = flight["price"] or price_m.group(1).strip()
+
+    return flight
+
+
+async def _scrape_flights_async(
     origin:      str,
     destination: str,
     date:        str,
     return_date: str | None,
     passengers:  int,
     cabin:       str,
-) -> tuple[str, str]:
-    import time
-    from actions.browser_control import browser_control
+) -> tuple[list[dict], list[dict], str, str]:
+    _ensure_started()
+    page = await _bt._get_page()
 
-    url = _build_google_flights_url(
-        origin, destination, date, return_date, passengers, cabin
-    )
+    url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+    print(f"[FlightFinder] 🌐 Navigating to: {url}")
+    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
-    print(f"[FlightFinder] 🌐 Opening: {url}")
-    browser_control({"action": "go_to", "url": url})
-    time.sleep(4)
+    # Wait for flight cards to render
+    for _ in range(12):
+        await asyncio.sleep(0.5)
+        cards = await page.query_selector_all("li.pIav2d")
+        if cards:
+            break
 
-    raw = browser_control({"action": "get_text", "max_chars": 15000})
-    if "results returned" not in raw and "Top departing flights" not in raw and "departing flights" not in raw:
-        time.sleep(2)
-        raw = browser_control({"action": "get_text", "max_chars": 15000})
+    cards = await page.query_selector_all("li.pIav2d")
+    outbound: list[dict] = []
+    for c in cards[:5]:
+        link = await c.query_selector("div.JMc5Xc")
+        aria = await link.get_attribute("aria-label") if link else ""
+        txt  = await c.inner_text()
+        parsed = _parse_flight_card(aria, txt)
+        if parsed.get("airline") or parsed.get("price"):
+            outbound.append(parsed)
 
-    return (raw or ""), url
+    returning: list[dict] = []
+    # For round trips, inspect return leg details by clicking the top departing flight
+    if return_date and cards:
+        first_link = await cards[0].query_selector("div.JMc5Xc")
+        if first_link:
+            await page.evaluate("(el) => el.click()", first_link)
+            # Wait for returning flights page to load
+            for _ in range(16):
+                await asyncio.sleep(0.5)
+                txt = await page.inner_text("body")
+                if "return to" in txt.lower() or "returning flights" in txt.lower():
+                    break
+
+            ret_cards = await page.query_selector_all("li.pIav2d")
+            for c in ret_cards[:5]:
+                link = await c.query_selector("div.JMc5Xc")
+                aria = await link.get_attribute("aria-label") if link else ""
+                txt  = await c.inner_text()
+                parsed = _parse_flight_card(aria, txt)
+                if parsed.get("airline") or parsed.get("price"):
+                    returning.append(parsed)
+
+    raw_text = await page.inner_text("body")
+    return outbound, returning, page.url, raw_text
 
 
 def _parse_flights_regex(raw_text: str) -> list[dict]:
@@ -201,57 +316,101 @@ def _parse_flights_with_gemini(
 
     return []
 
+
 def _format_spoken(
-    flights:     list[dict],
+    outbound:    list[dict],
+    returning:   list[dict],
     origin:      str,
     destination: str,
     date:        str,
     return_date: str | None = None,
 ) -> str:
     trip_desc = f"{origin} to {destination} on {date}" + (f" returning {return_date}" if return_date else "")
-    if not flights:
+    if not outbound:
         return (
             f"I couldn't find any flights for {trip_desc}, sir. "
             f"The page may not have loaded correctly."
         )
 
-    lines = [f"Here are the top flights for {trip_desc}, sir."]
+    # ONE-WAY TRIP
+    if not return_date or not returning:
+        lines = [f"Here are the top one-way flights from {origin} to {destination} on {date}, sir."]
+        for i, f in enumerate(outbound[:3], 1):
+            airline   = f.get("airline",   "Unknown airline")
+            departure = f.get("departure", "--:--")
+            arrival   = f.get("arrival",   "--:--")
+            duration  = f.get("duration",  "")
+            stops     = f.get("stops",     0)
+            price     = f.get("price",     "")
+            currency  = f.get("currency",  "USD")
 
-    for i, f in enumerate(flights[:5], 1):
-        airline   = f.get("airline",   "Unknown airline")
-        departure = f.get("departure", "--:--")
-        arrival   = f.get("arrival",   "--:--")
-        duration  = f.get("duration",  "")
-        stops     = f.get("stops",     0)
-        price     = f.get("price",     "")
-        currency  = f.get("currency",  "")
+            stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
+            price_str = f"{price} {currency}".strip() if price else "price unavailable"
+            dur_str   = f", {duration}" if duration else ""
 
-        stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
-        price_str = f"{price} {currency}".strip() if price else "price unavailable"
-        dur_str   = f", {duration}" if duration else ""
+            lines.append(
+                f"Option {i}: {airline}, departing {departure}, "
+                f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+            )
 
+        priced = [f for f in outbound if f.get("price")]
+        if priced:
+            cheapest = min(
+                priced,
+                key=lambda x: int(re.sub(r"[^\d]", "", str(x["price"])) or "999999"),
+            )
+            lines.append(
+                f"The cheapest one-way option is {cheapest.get('airline')} "
+                f"at {cheapest.get('price')} {cheapest.get('currency', 'USD')}."
+            )
+        return " ".join(lines)
+
+    # ROUND-TRIP
+    lines = [f"Here are the flight options for a round trip from {origin} to {destination}, departing {date} and returning {return_date}, sir."]
+    out0 = outbound[0]
+    out_stops = "non-stop" if out0.get("stops", 0) == 0 else f"{out0.get('stops')} stop{'s' if out0.get('stops', 0) > 1 else ''}"
+    lines.append(
+        f"For your outbound flight on {date}, the recommended option is {out0.get('airline')}, leaving {origin} at {out0.get('departure')} and arriving in {destination} at {out0.get('arrival')} ({out0.get('duration')}, {out_stops})."
+    )
+
+    cheapest_ret = min(
+        returning,
+        key=lambda x: int(re.sub(r"[^\d]", "", str(x.get("price", "999999"))) or "999999")
+    )
+    same_airline_ret = next(
+        (r for r in returning if out0.get("airline", "").lower() in r.get("airline", "").lower()),
+        None
+    )
+
+    cheap_stops = "non-stop" if cheapest_ret.get("stops", 0) == 0 else f"{cheapest_ret.get('stops')} stop{'s' if cheapest_ret.get('stops', 0) > 1 else ''}"
+
+    if cheapest_ret.get("airline", "").lower() != out0.get("airline", "").lower() or cheapest_ret.get("separate_tickets"):
         lines.append(
-            f"Option {i}: {airline}, departing {departure}, "
-            f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+            f"The lowest combined round-trip total is {cheapest_ret.get('price')} {cheapest_ret.get('currency', 'USD')}. "
+            f"Please note this lowest price requires separate tickets: flying {out0.get('airline')} outbound and {cheapest_ret.get('airline')} on the return flight departing at {cheapest_ret.get('departure')} ({cheapest_ret.get('duration')}, {cheap_stops})."
+        )
+        if same_airline_ret and same_airline_ret != cheapest_ret:
+            same_stops = "non-stop" if same_airline_ret.get("stops", 0) == 0 else f"{same_airline_ret.get('stops')} stop{'s' if same_airline_ret.get('stops', 0) > 1 else ''}"
+            lines.append(
+                f"If you prefer to fly {out0.get('airline')} both ways {same_stops}, the total round-trip fare is {same_airline_ret.get('price')} {same_airline_ret.get('currency', 'USD')}, returning at {same_airline_ret.get('departure')} and arriving at {same_airline_ret.get('arrival')}."
+            )
+    else:
+        lines.append(
+            f"The round-trip flight on {cheapest_ret.get('airline')} is {cheapest_ret.get('price')} {cheapest_ret.get('currency', 'USD')} total, returning at {cheapest_ret.get('departure')} ({cheap_stops})."
         )
 
-    # Cheapest — strip non-digits for comparison
-    priced = [f for f in flights if f.get("price")]
-    if priced:
-        cheapest = min(
-            priced,
-            key=lambda x: int(re.sub(r"[^\d]", "", str(x["price"])) or "999999"),
-        )
+    if len(outbound) > 1:
+        alt = outbound[1]
         lines.append(
-            f"The cheapest option is {cheapest.get('airline')} "
-            f"at {cheapest.get('price')} {cheapest.get('currency', '')}."
+            f"Alternatively, {alt.get('airline')} also offers outbound departures at {alt.get('departure')} with round-trip fares starting from {alt.get('price')}."
         )
 
     return " ".join(lines)
 
 
 def _format_text_report(
-    flights:     list[dict],
+    outbound:    list[dict],
+    returning:   list[dict],
     origin:      str,
     destination: str,
     date:        str,
@@ -261,8 +420,9 @@ def _format_text_report(
     lines = [
         "JARVIS — Flight Search Results",
         "─" * 50,
+        f"Trip Type : {'Round Trip' if return_date else 'One Way'}",
         f"Route     : {origin} → {destination}",
-        f"Date      : {date}",
+        f"Departure : {date}",
     ]
     if return_date:
         lines.append(f"Return    : {return_date}")
@@ -273,24 +433,47 @@ def _format_text_report(
         "",
     ]
 
-    if not flights:
+    if not outbound:
         lines.append("No flights found.")
-    else:
-        for i, f in enumerate(flights, 1):
+        return "\n".join(lines)
+
+    lines.append(f"OUTBOUND FLIGHTS ({origin} → {destination}):")
+    for i, f in enumerate(outbound, 1):
+        stops    = f.get("stops", 0)
+        stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+        lines += [
+            f"Flight {i}:",
+            f"  Airline   : {f.get('airline',   'N/A')}",
+            f"  Departure : {f.get('departure', 'N/A')}",
+            f"  Arrival   : {f.get('arrival',   'N/A')}",
+            f"  Duration  : {f.get('duration',  'N/A')}",
+            f"  Stops     : {stop_str}",
+            f"  Price     : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
+            "",
+        ]
+
+    if return_date and returning:
+        lines.append("─" * 50)
+        lines.append(f"RETURN OPTIONS ({destination} → {origin} on {return_date}):")
+        for i, f in enumerate(returning, 1):
             stops    = f.get("stops", 0)
             stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+            sep_str  = " [Separate Tickets]" if f.get("separate_tickets") else ""
             lines += [
-                f"Flight {i}:",
-                f"  Airline   : {f.get('airline',   'N/A')}",
-                f"  Departure : {f.get('departure', 'N/A')}",
-                f"  Arrival   : {f.get('arrival',   'N/A')}",
-                f"  Duration  : {f.get('duration',  'N/A')}",
-                f"  Stops     : {stop_str}",
-                f"  Price     : {f.get('price', 'N/A')} {f.get('currency', '')}",
-                "",
+                f"Option {i}{sep_str}:",
+                f"  Airline       : {f.get('airline',   'N/A')}",
+                f"  Departure     : {f.get('departure', 'N/A')}",
+                f"  Arrival       : {f.get('arrival',   'N/A')}",
+                f"  Duration      : {f.get('duration',  'N/A')}",
+                f"  Stops         : {stop_str}",
+                f"  Total RT Fare : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
             ]
+            if f.get("layover"):
+                lines.append(f"  Layovers      : {f.get('layover')}")
+            lines.append("")
 
     return "\n".join(lines)
+
 
 def _save_to_desktop(content: str, origin: str, destination: str) -> str:
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -331,7 +514,6 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     if not date_raw:
         return "Please provide a departure date, sir."
 
-    # Normalise cabin value
     if cabin not in _CABIN_CODE:
         cabin = "economy"
 
@@ -350,10 +532,12 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
             pass
 
     if player:
-        player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
+        log_msg = f"[FlightFinder] {origin} → {destination} ({date} to {return_date})" if return_date else f"[FlightFinder] {origin} → {destination} on {date}"
+        player.write_log(log_msg)
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak_msg = f"Searching round-trip flights from {origin} to {destination}, departing {date} and returning {return_date}, sir." if return_date else f"Searching flights from {origin} to {destination} on {date}, sir."
+        speak(speak_msg)
 
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
@@ -362,26 +546,41 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     )
 
     try:
-        raw_text, page_url = _search_flights_browser(
-            origin, destination, date, return_date, passengers, cabin
-        )
+        outbound: list[dict] = []
+        returning: list[dict] = []
+        page_url = ""
+        raw_text = ""
 
-        if not raw_text:
+        try:
+            _ensure_started()
+            outbound, returning, page_url, raw_text = _bt.run(
+                _scrape_flights_async(origin, destination, date, return_date, passengers, cabin),
+                timeout=35
+            )
+        except Exception as scrape_err:
+            print(f"[FlightFinder] ⚠️ Direct browser scrape error: {scrape_err}, trying fallback...")
+            page_url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+            browser_control({"action": "go_to", "url": page_url})
+            import time
+            time.sleep(4)
+            raw_text = browser_control({"action": "get_text", "max_chars": 15000})
+
+        # If DOM scraping produced no outbound cards, use Gemini/regex fallback on raw_text
+        if not outbound and raw_text:
+            outbound = _parse_flights_with_gemini(raw_text, origin, destination, date)
+
+        if not outbound and not raw_text:
             return "Could not retrieve flight data, sir. The page may not have loaded."
 
-        if speak:
-            speak("Analysing the results now, sir.")
-
-        flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
-        spoken  = _format_spoken(flights, origin, destination, date, return_date)
+        spoken = _format_spoken(outbound, returning, origin, destination, date, return_date)
 
         if speak:
             speak(spoken)
 
         result = spoken
 
-        if save and flights:
-            report     = _format_text_report(flights, origin, destination, date, return_date, page_url)
+        if save and outbound:
+            report     = _format_text_report(outbound, returning, origin, destination, date, return_date, page_url)
             saved_path = _save_to_desktop(report, origin, destination)
             result    += f" Results saved to Desktop: {saved_path}"
 
