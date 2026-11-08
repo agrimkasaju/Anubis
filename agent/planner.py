@@ -79,11 +79,14 @@ send_message
   platform: string (required)
 
 reminder
-  action: "set_reminder" | "add_event" | "list_events" | "add_task" | "list_tasks" | "complete_task" (default: "set_reminder")
+  action: "set_reminder" | "delete_reminder" | "add_event" | "delete_event" | "list_events" | "add_task" | "list_tasks" | "complete_task" | "delete_task" (default: "set_reminder")
   title: string (optional) — Event or task title
   message: string (optional) — Reminder text or event summary
-  date: string YYYY-MM-DD or "today" / "tomorrow" (optional)
-  time: string HH:MM (24h) or "2:30 PM" (optional)
+  query: string (optional) — Keyword for deleting/canceling reminders, events, or tasks
+  date: string YYYY-MM-DD or "today" / "tomorrow" or range "from today to next Saturday" (optional)
+  start_date: string (optional) — range start date
+  end_date: string (optional) — range end date (e.g. "next Saturday")
+  time: string HH:MM (24h) or "10:00 AM" (optional)
   end_time: string HH:MM (optional) — for calendar events
   days: integer (optional) — query range for list_events
   due_date: string (optional) — due date for tasks
@@ -174,6 +177,16 @@ Steps:
 
 reminder | action: "add_task", title: "Buy groceries"
 reminder | action: "list_tasks"
+
+Goal: "Set a reminder from today to next Saturday to check flight finder for Calgary trip"
+Steps:
+
+reminder | action: "set_reminder", message: "Check flight finder for Calgary trip", start_date: [today], end_date: "next Saturday", time: "10:00"
+
+Goal: "Remove those reminders for the Calgary trip"
+Steps:
+
+reminder | action: "delete_reminder", query: "Calgary"
 
 OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 {

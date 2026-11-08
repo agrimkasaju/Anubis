@@ -27,35 +27,52 @@ except ImportError:
     get_tasks_service = lambda interactive=False: None
 
 SCHEDULED_REMINDERS_FILE = os.path.join(project_root, "config", "scheduled_reminders.json")
+WAYBAR_NOTIFICATIONS_FILE = os.path.expanduser("~/.cache/waybar-ycal/notifications.json")
 
 
 def _load_scheduled_reminders() -> list[dict]:
     """Loads active scheduled Linux timers metadata."""
-    if os.path.exists(SCHEDULED_REMINDERS_FILE):
-        try:
-            with open(SCHEDULED_REMINDERS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
+    sources = [SCHEDULED_REMINDERS_FILE, WAYBAR_NOTIFICATIONS_FILE]
+    seen_units = set()
+    combined = []
+    for s_path in sources:
+        if os.path.exists(s_path):
+            try:
+                with open(s_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        for item in data:
+                            u = item.get("unit") or item.get("id")
+                            if u and u not in seen_units:
+                                seen_units.add(u)
+                                combined.append(item)
+            except Exception:
+                pass
+    return combined
 
 
 def _save_scheduled_reminders(reminders: list[dict]) -> None:
-    """Persists active scheduled Linux timers metadata."""
-    try:
-        os.makedirs(os.path.dirname(SCHEDULED_REMINDERS_FILE), exist_ok=True)
-        with open(SCHEDULED_REMINDERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(reminders, f, indent=2)
-    except Exception as e:
-        print(f"[Reminder] ⚠️ Error saving scheduled reminders: {e}")
+    """Persists active scheduled Linux timers metadata across Anubis and Waybar."""
+    paths = [SCHEDULED_REMINDERS_FILE, WAYBAR_NOTIFICATIONS_FILE]
+    for p in paths:
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(reminders, f, indent=2)
+        except Exception as e:
+            print(f"[Reminder] ⚠️ Error saving scheduled reminders to {p}: {e}")
 
 
 def _record_timer(unit_name: str, message: str, target_dt: datetime) -> None:
     """Records a systemd timer unit for future cancellation."""
     rems = _load_scheduled_reminders()
     rems.append({
+        "id": unit_name,
         "unit": unit_name,
+        "title": message,
         "message": message,
+        "date": target_dt.strftime("%Y-%m-%d"),
+        "time": target_dt.strftime("%I:%M %p"),
         "target_dt": target_dt.isoformat()
     })
     _save_scheduled_reminders(rems)
@@ -135,6 +152,7 @@ def _parse_single_date(d_str: Optional[str], now: Optional[datetime] = None) -> 
         return now.date()
 
     d_clean = re.sub(r"^(from|on|for|to)\s+", "", d_str.strip().lower()).replace("?", "").strip()
+    d_clean = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", d_clean)
 
     if d_clean in ("today", "now"):
         return now.date()
@@ -166,11 +184,18 @@ def _parse_single_date(d_str: Optional[str], now: Optional[datetime] = None) -> 
                 days_ahead += 7 * (next_count - 1)
             return (now + timedelta(days=days_ahead)).date()
 
-    for dfmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d"):
+    for dfmt in (
+        "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d",
+        "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y",
+        "%B %d", "%b %d"
+    ):
         try:
             dt = datetime.strptime(d_clean, dfmt)
             if dt.year == 1900:
                 dt = dt.replace(year=now.year)
+                # If target month has passed by more than 2 months, roll over to next year
+                if dt.date() < (now.date() - timedelta(days=60)):
+                    dt = dt.replace(year=now.year + 1)
             return dt.date()
         except ValueError:
             pass
@@ -341,8 +366,8 @@ def _add_calendar_event(
         return False, str(e)
 
 
-def _delete_calendar_events(query: str) -> tuple[int, list[str]]:
-    """Deletes matching Google Calendar events and recurring event series."""
+def _delete_calendar_events(query: str, reminders_only: bool = True) -> tuple[int, list[str]]:
+    """Deletes matching Google Calendar events. When reminders_only is True, protects regular calendar events."""
     service = get_calendar_service(interactive=False)
     if not service:
         return 0, []
@@ -367,14 +392,26 @@ def _delete_calendar_events(query: str) -> tuple[int, list[str]]:
         for item in items:
             summary = item.get("summary", "")
             desc = item.get("description", "")
+            lower_sum = summary.lower()
+
+            if reminders_only:
+                # Must be a reminder event to prevent deleting real calendar events
+                is_reminder_event = (
+                    "reminder" in lower_sum
+                    or lower_sum.startswith("reminder")
+                    or "reminder" in desc.lower()
+                )
+                if not is_reminder_event:
+                    continue
+
             match = False
             if q_clean in ("all", "*", ""):
                 match = True
-            elif q_clean in summary.lower() or q_clean in desc.lower():
+            elif q_clean in lower_sum or q_clean in desc.lower():
                 match = True
             else:
                 words = [w for w in q_clean.split() if len(w) > 2]
-                if words and any(w in summary.lower() or w in desc.lower() for w in words):
+                if words and any(w in lower_sum or w in desc.lower() for w in words):
                     match = True
 
             if match:
@@ -387,15 +424,36 @@ def _delete_calendar_events(query: str) -> tuple[int, list[str]]:
         return 0, []
 
 
-def _list_calendar_events(days: int = 1) -> str:
-    """Queries upcoming Google Calendar events for the next N days."""
+def _list_calendar_events(
+    days: int = 1,
+    target_date: Optional[str] = None,
+    query: Optional[str] = None,
+) -> str:
+    """Queries upcoming Google Calendar events for the next N days or a specific target date."""
     service = get_calendar_service(interactive=False)
     if not service:
         return "Google Calendar is not connected. Please authorize Google credentials."
 
     now = datetime.now().astimezone()
-    time_min = now.isoformat()
-    time_max = (now + timedelta(days=days)).isoformat()
+    today_date = now.date()
+
+    if target_date:
+        try:
+            parsed_d = _parse_single_date(target_date, datetime.now())
+            tz = now.tzinfo
+            dt_start = datetime.combine(parsed_d, time.min).replace(tzinfo=tz)
+            dt_end = datetime.combine(parsed_d + timedelta(days=max(1, days) - 1), time.max).replace(tzinfo=tz)
+            time_min = dt_start.isoformat()
+            time_max = dt_end.isoformat()
+            header_target = f"for {parsed_d.strftime('%A, %b %d')}" if days <= 1 else f"from {parsed_d.strftime('%A, %b %d')} for {days} days"
+        except Exception:
+            time_min = now.isoformat()
+            time_max = (now + timedelta(days=days)).isoformat()
+            header_target = f"for the next {days} day{'s' if days > 1 else ''}"
+    else:
+        time_min = now.isoformat()
+        time_max = (now + timedelta(days=days)).isoformat()
+        header_target = f"for the next {days} day{'s' if days > 1 else ''}"
 
     try:
         events_result = (
@@ -406,16 +464,15 @@ def _list_calendar_events(days: int = 1) -> str:
                 timeMax=time_max,
                 singleEvents=True,
                 orderBy="startTime",
+                q=query if query else None,
             )
             .execute()
         )
         items = events_result.get("items", [])
         if not items:
-            day_str = "day" if days == 1 else f"{days} days"
-            return f"You have no upcoming events scheduled for the next {day_str}."
+            return f"You have no upcoming events scheduled {header_target}."
 
-        lines = [f"You have {len(items)} upcoming event{'s' if len(items) > 1 else ''}:"]
-        today_date = now.date()
+        lines = [f"You have {len(items)} event{'s' if len(items) > 1 else ''} scheduled {header_target}:"]
         tomorrow_date = today_date + timedelta(days=1)
 
         for i, item in enumerate(items, 1):
@@ -588,7 +645,6 @@ def reminder(
       - "list_tasks": queries pending tasks in Google Tasks.
       - "complete_task": marks a task as completed in Google Tasks.
       - "delete_task": removes a task from Google Tasks.
-      - "track_flight": autonomous background flight price watcher.
 
     Preserves 100% backward compatibility for calls passing (date, time, message).
     """
@@ -606,9 +662,11 @@ def reminder(
             days = max(1, int(raw_days))
         except (ValueError, TypeError):
             days = 1
-        res = _list_calendar_events(days=days)
+        date_str = parameters.get("date")
+        query = parameters.get("query")
+        res = _list_calendar_events(days=days, target_date=date_str, query=query)
         if player and hasattr(player, "write_log"):
-            player.write_log(f"[calendar] listed events for next {days} day(s)")
+            player.write_log(f"[calendar] listed events for {date_str or f'next {days} day(s)'}")
         return res
 
     # --- ACTION 2: LIST GOOGLE TASKS ---
@@ -701,29 +759,17 @@ def reminder(
             or ""
         )
 
-        cal_count, deleted_titles = _delete_calendar_events(query)
+        is_reminders_only = action in ("delete_reminder", "cancel_reminder", "remove_reminder")
+        cal_count, deleted_titles = _delete_calendar_events(query, reminders_only=is_reminders_only)
         linux_count = _cancel_linux_notifications(query)
-
-        # Also cancel flight price tracker if related
-        tracker_cancelled = False
-        lower_q = query.lower()
-        if "flight" in lower_q or "calgary" in lower_q or "trip" in lower_q:
-            try:
-                from actions.flight_tracker import cancel_flight_tracker
-                res_track = cancel_flight_tracker(destination=query)
-                if res_track.get("status") == "success":
-                    tracker_cancelled = True
-            except Exception:
-                pass
 
         total = cal_count + linux_count
         if player and hasattr(player, "write_log"):
             player.write_log(f"[reminder] cancelled {total} reminder(s) for '{query}'")
 
-        if total > 0 or tracker_cancelled:
+        if total > 0:
             sample = f" for '{deleted_titles[0]}'" if deleted_titles else f" matching '{query}'"
-            track_note = " and canceled active flight price tracking" if tracker_cancelled else ""
-            return f"Removed {max(1, cal_count)} reminder(s){sample} from Google Calendar and canceled desktop alerts{track_note}."
+            return f"Removed {max(1, cal_count)} reminder(s){sample} from Google Calendar and canceled desktop alerts."
         else:
             return f"I couldn't find any upcoming reminders matching '{query}' to remove."
 
@@ -782,25 +828,6 @@ def reminder(
                         scheduled_days += 1
                 curr_d += timedelta(days=1)
 
-            # Check if autonomous flight tracking is also requested
-            tracker_msg = ""
-            lower_msg = message.lower()
-            if ("flight" in lower_msg or "ticket" in lower_msg) and ("track" in lower_msg or "check" in lower_msg or "find" in lower_msg):
-                origin = parameters.get("origin") or "Ottawa"
-                destination = parameters.get("destination") or "Calgary"
-                try:
-                    from actions.flight_tracker import add_flight_tracker
-                    track_res = add_flight_tracker(
-                        origin=origin,
-                        destination=destination,
-                        date=start_d.strftime("%Y-%m-%d"),
-                        return_date=end_d.strftime("%Y-%m-%d"),
-                        end_date=end_d.strftime("%Y-%m-%d"),
-                    )
-                    tracker_msg = " Automatic daily flight price tracking is also active."
-                except Exception:
-                    pass
-
             start_label = start_d.strftime("%A, %b %d")
             end_label = end_d.strftime("%A, %b %d")
             time_label = target_time.strftime("%I:%M %p")
@@ -810,7 +837,7 @@ def reminder(
 
             return (
                 f"Daily reminder set from {start_label} to {end_label} at {time_label}: "
-                f"{message} (synced to Google Calendar with daily desktop alerts).{tracker_msg}"
+                f"{message} (synced to Google Calendar with daily desktop alerts)."
             )
 
         # Single-time reminder
@@ -838,38 +865,6 @@ def reminder(
             return f"Reminder set for {formatted_time}: {message}."
         else:
             return f"Failed to schedule reminder for {formatted_time}."
-
-    # --- ACTION 9: TRACK FLIGHT PRICES OVER A DATE WINDOW ---
-    elif action in ("track_flight", "flight_tracker"):
-        from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker
-        sub_act = (parameters.get("sub_action") or "track").lower().strip()
-        if sub_act == "list":
-            return list_flight_trackers()
-        elif sub_act == "cancel":
-            return cancel_flight_tracker(
-                origin=parameters.get("origin", ""),
-                destination=parameters.get("destination", "")
-            )
-
-        res = add_flight_tracker(
-            origin=parameters.get("origin", ""),
-            destination=parameters.get("destination", ""),
-            date=parameters.get("date", ""),
-            return_date=parameters.get("return_date"),
-            end_date=parameters.get("end_date") or parameters.get("until"),
-            carry_on=max(0, int(parameters.get("carry_on", 0))),
-            checked_bags=max(0, int(parameters.get("checked_bags", 0))),
-            airline=parameters.get("airline"),
-        )
-        msg = res.get("message", "Flight tracking set.")
-        _add_calendar_event(
-            title=f"Flight Tracker: {parameters.get('origin', '')} → {parameters.get('destination', '')}",
-            start_dt=datetime.now() + timedelta(days=1),
-            description=msg
-        )
-        if player and hasattr(player, "write_log"):
-            player.write_log(f"[flight_tracker] {parameters.get('origin')} → {parameters.get('destination')}")
-        return msg
 
     else:
         return f"Unknown reminder action: '{action}'."

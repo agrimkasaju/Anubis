@@ -244,19 +244,26 @@ TOOL_DECLARATIONS = [
         "name": "reminder",
         "description": (
             "Manages reminders, Google Calendar events, and Google Tasks. "
-            "Use to schedule timed reminders, add/list calendar events, or add/list/complete to-do tasks."
+            "Use to schedule single or daily/range recurring reminders, add/list/delete calendar events, "
+            "or add/list/complete/delete to-do tasks. Can cancel or remove reminders using delete_reminder."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "action": {
                     "type": "STRING",
-                    "description": "set_reminder | add_event | list_events | add_task | list_tasks | complete_task (default: set_reminder)"
+                    "description": (
+                        "set_reminder | delete_reminder | add_event | delete_event | "
+                        "list_events | add_task | list_tasks | complete_task | delete_task (default: set_reminder)"
+                    )
                 },
                 "title":       {"type": "STRING", "description": "Event title or task description"},
                 "message":     {"type": "STRING", "description": "Reminder text or event message (synonym for title)"},
-                "date":        {"type": "STRING", "description": "Date in YYYY-MM-DD format, or 'today' / 'tomorrow'"},
-                "time":        {"type": "STRING", "description": "Start time in HH:MM format (24h) or '2:30 PM'"},
+                "query":       {"type": "STRING", "description": "Search keyword when deleting/canceling reminders, events, or tasks"},
+                "date":        {"type": "STRING", "description": "Date YYYY-MM-DD, 'today', 'tomorrow', 'next Saturday', or range 'from today to next Saturday'"},
+                "start_date":  {"type": "STRING", "description": "Start date for recurring or date-range reminders"},
+                "end_date":    {"type": "STRING", "description": "End date for recurring or date-range reminders (e.g. 'next Saturday')"},
+                "time":        {"type": "STRING", "description": "Start time in HH:MM format (24h) or '10:00 AM'"},
                 "end_time":    {"type": "STRING", "description": "End time in HH:MM format for calendar events (optional)"},
                 "days":        {"type": "INTEGER", "description": "Number of days ahead to query events (default: 1)"},
                 "due_date":    {"type": "STRING", "description": "Due date for tasks (YYYY-MM-DD)"},

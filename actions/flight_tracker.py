@@ -195,25 +195,6 @@ def add_flight_tracker(
     elif checked_bags > 0:
         bag_str = f" with {checked_bags} checked bag(s)"
 
-    # Sync a calendar event so it is visible in Google Calendar and Waybar
-    try:
-        from actions.reminder import _add_calendar_event
-        cal_title = f"✈️ Track Flights: {origin} → {destination}"
-        cal_desc = (
-            f"Flight price tracking active until {expires_at[:10]}.\n"
-            f"Route: {origin} to {destination} ({dep_date}{' to ' + ret_date if ret_date else ''})\n"
-            f"Baggage: {bag_str.strip() or 'Base fare (0 bags)'}\n"
-            f"Baseline: ${baseline_price} USD on {best_airline}\n"
-            f"Checks: Daily at 8:30 AM & 6:30 PM (headless)"
-        )
-        _add_calendar_event(
-            title=cal_title,
-            start_dt=now + timedelta(minutes=5),
-            description=cal_desc,
-        )
-    except Exception as ce:
-        print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
-
     msg = (
         f"Tracking flights from {origin} to {destination} ({dep_date}"
         f"{' to ' + ret_date if ret_date else ''}){bag_str}. "
