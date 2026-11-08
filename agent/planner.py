@@ -102,6 +102,7 @@ flight_finder
   return_date: string (optional)
   carry_on: integer (optional)
   checked_bags: integer (optional)
+  airline: string (optional)
 
 get_stock_analysis
   symbol: string (required) — The stock ticker symbol (e.g., AAPL, NOK)

@@ -474,8 +474,10 @@ def _format_spoken(
 
     if len(outbound) > 1:
         alt = outbound[1]
+        alt_stops = "non-stop" if alt.get("stops", 0) == 0 else f"{alt.get('stops')} stop{'s' if alt.get('stops', 0) > 1 else ''}"
+        alt_dur = f", {alt.get('duration')}" if alt.get("duration") else ""
         lines.append(
-            f"Alternatively, {alt.get('airline')} also offers outbound departures at {alt.get('departure')} with round-trip fares starting from {alt.get('price')}."
+            f"Alternatively, {alt.get('airline')} offers outbound departures at {alt.get('departure')}{alt_dur} ({alt_stops}) with round-trip fares starting from {alt.get('price')}."
         )
 
     return " ".join(lines)
@@ -595,6 +597,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     # Parse baggage requirements
     carry_on     = max(0, int(params.get("carry_on") or params.get("carryon") or 0))
     checked_bags = max(0, int(params.get("checked_bags") or params.get("checked_bag") or params.get("checked") or 0))
+    preferred_airline = (params.get("airline") or "").strip().lower()
     bags_raw     = str(params.get("bags") or "").lower()
     if "both" in bags_raw:
         carry_on     = max(carry_on, 1)
@@ -664,6 +667,12 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         # If DOM scraping produced no outbound cards, use Gemini/regex fallback on raw_text
         if not outbound and raw_text:
             outbound = _parse_flights_with_gemini(raw_text, origin, destination, date)
+
+        if preferred_airline and outbound:
+            matched = [f for f in outbound if preferred_airline in f.get("airline", "").lower()]
+            others = [f for f in outbound if preferred_airline not in f.get("airline", "").lower()]
+            if matched:
+                outbound = matched + others
 
         if not outbound and not raw_text:
             return "Could not retrieve flight data, sir. The page may not have loaded."

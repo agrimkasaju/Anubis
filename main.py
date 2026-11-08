@@ -508,6 +508,7 @@ TOOL_DECLARATIONS = [
                 "cabin":        {"type": "STRING",  "description": "economy | premium | business | first"},
                 "carry_on":     {"type": "INTEGER", "description": "Number of carry-on bags requested (e.g. 1)"},
                 "checked_bags": {"type": "INTEGER", "description": "Number of checked bags requested (e.g. 1)"},
+                "airline":      {"type": "STRING",  "description": "Specific airline name if user asked (e.g. Air Canada, WestJet)"},
                 "save":         {"type": "BOOLEAN", "description": "Save results to Notepad"},
             },
             "required": ["origin", "destination", "date"]
