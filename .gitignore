@@ -3,6 +3,10 @@ venv/
 .playwright-browsers/
 **/__pycache__/
 config/api_keys.json
+config/credentials.json
+config/google_token.json
+config/scheduled_reminders.json
+data/flight_trackers.json
 memory/long_term.json
 *.onnx
 dashboard.log

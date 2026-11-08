@@ -79,9 +79,14 @@ send_message
   platform: string (required)
 
 reminder
-  date: string YYYY-MM-DD (required)
-  time: string HH:MM (required)
-  message: string (required)
+  action: "set_reminder" | "add_event" | "list_events" | "add_task" | "list_tasks" | "complete_task" (default: "set_reminder")
+  title: string (optional) — Event or task title
+  message: string (optional) — Reminder text or event summary
+  date: string YYYY-MM-DD or "today" / "tomorrow" (optional)
+  time: string HH:MM (24h) or "2:30 PM" (optional)
+  end_time: string HH:MM (optional) — for calendar events
+  days: integer (optional) — query range for list_events
+  due_date: string (optional) — due date for tasks
 
 desktop_control
   action: "wallpaper" | "organize" | "clean" | "list" | "task" (required)
@@ -100,6 +105,17 @@ flight_finder
   destination: string (required)
   date: string (required)
   return_date: string (optional)
+  carry_on: integer (optional)
+  checked_bags: integer (optional)
+  airline: string (optional)
+
+flight_tracker
+  action: "track" | "list" | "cancel" (required)
+  origin: string (for track/cancel)
+  destination: string (for track/cancel)
+  date: string (for track)
+  return_date: string (optional)
+  end_date: string (optional, e.g. "next Saturday")
   carry_on: integer (optional)
   checked_bags: integer (optional)
   airline: string (optional)
@@ -146,7 +162,18 @@ send_message | receiver: John, message_text: "There is a meeting tomorrow", plat
 Goal: "Open the clock and set a reminder for 30 minutes later"
 Steps:
 
-reminder | date: [today], time: [now+30min], message: "Reminder"
+reminder | action: "set_reminder", date: [today], time: [now+30min], message: "Reminder"
+
+Goal: "What are my upcoming events for the next 3 days"
+Steps:
+
+reminder | action: "list_events", days: 3
+
+Goal: "Add buy groceries to my to-do tasks and check my pending tasks"
+Steps:
+
+reminder | action: "add_task", title: "Buy groceries"
+reminder | action: "list_tasks"
 
 OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 {

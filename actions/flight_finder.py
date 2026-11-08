@@ -1,6 +1,7 @@
 #flight_finder.py
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
@@ -305,6 +306,105 @@ async def _scrape_flights_async(
 
     raw_text = await page.inner_text("body")
     return outbound, returning, page.url, raw_text
+
+
+async def scrape_flights_headless_async(
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    passengers:   int        = 1,
+    cabin:        str        = "economy",
+    carry_on:     int        = 0,
+    checked_bags: int        = 0,
+    airline:      str | None = None,
+) -> tuple[list[dict], list[dict], str]:
+    from playwright.async_api import async_playwright
+
+    default_browsers_dir = BASE_DIR / ".playwright-browsers"
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and default_browsers_dir.exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(default_browsers_dir)
+
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox"]
+    )
+    page = await browser.new_page(viewport={"width": 1280, "height": 800})
+
+    url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+
+        for _ in range(12):
+            await asyncio.sleep(0.5)
+            cards = await page.query_selector_all("li.pIav2d")
+            if cards:
+                break
+
+        if carry_on > 0 or checked_bags > 0:
+            await _apply_bag_filters(page, carry_on, checked_bags)
+
+        cards = await page.query_selector_all("li.pIav2d")
+        outbound: list[dict] = []
+        for c in cards[:5]:
+            link = await c.query_selector("div.JMc5Xc")
+            aria = await link.get_attribute("aria-label") if link else ""
+            txt  = await c.inner_text()
+            parsed = _parse_flight_card(aria, txt)
+            if parsed.get("airline") or parsed.get("price"):
+                outbound.append(parsed)
+
+        returning: list[dict] = []
+        if return_date and cards:
+            first_link = await cards[0].query_selector("div.JMc5Xc")
+            if first_link:
+                await page.evaluate("(el) => el.click()", first_link)
+                for _ in range(16):
+                    await asyncio.sleep(0.5)
+                    txt = await page.inner_text("body")
+                    if "return to" in txt.lower() or "returning flights" in txt.lower():
+                        break
+
+                ret_cards = await page.query_selector_all("li.pIav2d")
+                for c in ret_cards[:5]:
+                    link = await c.query_selector("div.JMc5Xc")
+                    aria = await link.get_attribute("aria-label") if link else ""
+                    txt  = await c.inner_text()
+                    parsed = _parse_flight_card(aria, txt)
+                    if parsed.get("airline") or parsed.get("price"):
+                        returning.append(parsed)
+
+        if airline and outbound:
+            air_low = airline.strip().lower()
+            matched = [f for f in outbound if air_low in f.get("airline", "").lower()]
+            others  = [f for f in outbound if air_low not in f.get("airline", "").lower()]
+            if matched:
+                outbound = matched + others
+
+        return outbound, returning, page.url
+
+    finally:
+        await browser.close()
+        await pw.stop()
+
+
+def scrape_flights_headless(
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    passengers:   int        = 1,
+    cabin:        str        = "economy",
+    carry_on:     int        = 0,
+    checked_bags: int        = 0,
+    airline:      str | None = None,
+) -> tuple[list[dict], list[dict], str]:
+    return asyncio.run(
+        scrape_flights_headless_async(
+            origin, destination, date, return_date, passengers, cabin, carry_on, checked_bags, airline
+        )
+    )
 
 
 def _parse_flights_regex(raw_text: str) -> list[dict]:

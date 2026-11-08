@@ -242,15 +242,27 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "reminder",
-        "description": "Sets a timed reminder using Windows Task Scheduler.",
+        "description": (
+            "Manages reminders, Google Calendar events, and Google Tasks. "
+            "Use to schedule timed reminders, add/list calendar events, or add/list/complete to-do tasks."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
+                "action": {
+                    "type": "STRING",
+                    "description": "set_reminder | add_event | list_events | add_task | list_tasks | complete_task (default: set_reminder)"
+                },
+                "title":       {"type": "STRING", "description": "Event title or task description"},
+                "message":     {"type": "STRING", "description": "Reminder text or event message (synonym for title)"},
+                "date":        {"type": "STRING", "description": "Date in YYYY-MM-DD format, or 'today' / 'tomorrow'"},
+                "time":        {"type": "STRING", "description": "Start time in HH:MM format (24h) or '2:30 PM'"},
+                "end_time":    {"type": "STRING", "description": "End time in HH:MM format for calendar events (optional)"},
+                "days":        {"type": "INTEGER", "description": "Number of days ahead to query events (default: 1)"},
+                "due_date":    {"type": "STRING", "description": "Due date for tasks (YYYY-MM-DD)"},
+                "description": {"type": "STRING", "description": "Optional details or notes for events/tasks"}
             },
-            "required": ["date", "time", "message"]
+            "required": []
         }
     },
     {
@@ -512,6 +524,25 @@ TOOL_DECLARATIONS = [
                 "save":         {"type": "BOOLEAN", "description": "Save results to Notepad"},
             },
             "required": ["origin", "destination", "date"]
+        }
+    },
+    {
+        "name": "flight_tracker",
+        "description": "Sets up autonomous twice-daily flight price tracking (morning at 8:30 AM and evening at 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops with exact baggage filters.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING",  "description": "track | list | cancel"},
+                "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
+                "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
+                "date":         {"type": "STRING",  "description": "Departure date for the flight"},
+                "return_date":  {"type": "STRING",  "description": "Return date for round trips"},
+                "end_date":     {"type": "STRING",  "description": "When to stop polling (e.g. 'next Saturday', '2026-11-14')"},
+                "carry_on":     {"type": "INTEGER", "description": "Number of carry-on bags (default: 0)"},
+                "checked_bags": {"type": "INTEGER", "description": "Number of checked bags (default: 0)"},
+                "airline":      {"type": "STRING",  "description": "Optional airline filter (e.g. Air Canada, WestJet)"},
+            },
+            "required": ["action"]
         }
     },
     {
@@ -949,6 +980,27 @@ class JarvisLive:
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "flight_tracker":
+                from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker
+                action = (args.get("action") or "track").lower().strip()
+                if action == "list":
+                    r = list_flight_trackers()
+                elif action == "cancel":
+                    r = cancel_flight_tracker(origin=args.get("origin", ""), destination=args.get("destination", ""))
+                else:
+                    res = await loop.run_in_executor(None, lambda: add_flight_tracker(
+                        origin=args.get("origin", ""),
+                        destination=args.get("destination", ""),
+                        date=args.get("date", ""),
+                        return_date=args.get("return_date"),
+                        end_date=args.get("end_date"),
+                        carry_on=max(0, int(args.get("carry_on", 0))),
+                        checked_bags=max(0, int(args.get("checked_bags", 0))),
+                        airline=args.get("airline"),
+                    ))
+                    r = res.get("message", "Flight tracker created.")
+                result = r or "Done."
             elif name == "get_stock_analysis":
                 # Keep the import here so it only loads if the tool is requested
                 from actions.stock_actions import get_stock_analysis
@@ -1216,6 +1268,8 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._monitor_job_queue())
+                    from services.flight_poller import get_poller_daemon
+                    tg.create_task(get_poller_daemon().start())
                     
             except Exception as e:
                 print(f"[ORION] ⚠️ {e}")
