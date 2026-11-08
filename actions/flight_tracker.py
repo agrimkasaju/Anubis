@@ -71,6 +71,71 @@ def _send_desktop_notification(title: str, message: str):
         print(f"[FlightTracker] ⚠️ Notification failed: {e}")
 
 
+def sync_price_drop_to_calendar(
+    tracker: dict,
+    price: int,
+    drop_amount: int = 0,
+    airline: Optional[str] = None,
+    page_url: Optional[str] = None,
+) -> tuple[bool, str]:
+    """
+    Adds a Google Calendar notification event for a detected low price flight deal.
+    Sets a popup reminder so Google Calendar delivers a push notification to phone & desktop.
+    """
+    try:
+        from actions.reminder import _add_calendar_event
+        now = datetime.now()
+        origin = tracker.get("origin", "Origin")
+        destination = tracker.get("destination", "Destination")
+        dep_date = tracker.get("date", "")
+        ret_date = tracker.get("return_date")
+        currency = tracker.get("currency", "USD")
+        best_airline = airline or tracker.get("best_airline", "Unknown")
+
+        bag_parts = []
+        if tracker.get("carry_on", 0) > 0:
+            bag_parts.append(f"{tracker['carry_on']} carry-on")
+        if tracker.get("checked_bags", 0) > 0:
+            bag_parts.append(f"{tracker['checked_bags']} checked bag(s)")
+        bag_desc = f"Included Bags: {', '.join(bag_parts)}" if bag_parts else "Included Bags: Base fare (0 bags)"
+
+        dates_desc = f"{dep_date} to {ret_date}" if ret_date else dep_date
+        saving_text = f" (Dropped by ${drop_amount}!)" if drop_amount > 0 else " (Target Low Price Deal)"
+
+        cal_title = f"✈️ Flight Deal: {origin} → {destination} (${price} {currency})"
+        cal_desc = (
+            f"🎯 Low Price Flight Notification from Anubis\n\n"
+            f"• Route: {origin} to {destination}\n"
+            f"• Travel Dates: {dates_desc}\n"
+            f"• Best Fare: ${price} {currency}{saving_text}\n"
+            f"• Airline: {best_airline}\n"
+            f"• {bag_desc}\n"
+            f"• Alert Time: {now.strftime('%A, %b %d at %I:%M %p')}\n"
+        )
+        if page_url:
+            cal_desc += f"• Booking Link: {page_url}\n"
+
+        # Schedule starting 2 minutes from now with 0-min popup reminder so Google Calendar
+        # immediately triggers a notification alert across all synced devices
+        start_time = now + timedelta(minutes=2)
+        end_time = start_time + timedelta(minutes=30)
+        ok, link_or_err = _add_calendar_event(
+            title=cal_title,
+            start_dt=start_time,
+            end_dt=end_time,
+            description=cal_desc,
+            popup_minutes=0,
+        )
+        if ok:
+            print(f"[FlightTracker] 📅 Synced flight deal (${price}) to Google Calendar with notification: {cal_title}")
+        else:
+            print(f"[FlightTracker] ⚠️ Calendar sync notice: {link_or_err}")
+        return ok, link_or_err
+    except Exception as e:
+        print(f"[FlightTracker] ⚠️ Calendar sync error: {e}")
+        return False, str(e)
+
+
 def add_flight_tracker(
     origin:       str,
     destination:  str,
@@ -186,6 +251,18 @@ def add_flight_tracker(
 
     data["trackers"].append(tracker)
     _save_data(data)
+
+    # Sync initial baseline flight deal to Google Calendar
+    try:
+        sync_price_drop_to_calendar(
+            tracker=tracker,
+            price=baseline_price,
+            drop_amount=0,
+            airline=best_airline,
+            page_url=page_url,
+        )
+    except Exception as ce:
+        print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
 
     bag_str = ""
     if carry_on > 0 and checked_bags > 0:
@@ -313,6 +390,19 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
                 )
 
                 _send_desktop_notification(alert_title, alert_body)
+
+                # Sync price drop deal notification to Google Calendar
+                try:
+                    sync_price_drop_to_calendar(
+                        tracker=t,
+                        price=current_price,
+                        drop_amount=drop_amount,
+                        airline=current_airline,
+                        page_url=page_url,
+                    )
+                except Exception as ce:
+                    print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
+
                 alert_info = {
                     "tracker_id": t_id,
                     "origin": t["origin"],
@@ -395,3 +485,28 @@ def cancel_flight_tracker(origin: str, destination: str) -> str:
         _save_data(data)
         return f"Cancelled flight tracking for {origin} to {destination}, sir."
     return f"No active flight tracking found for {origin} to {destination}, sir."
+
+
+def sync_active_trackers_to_calendar() -> str:
+    """Syncs the current best flight deals for all active trackers to Google Calendar."""
+    active = get_active_trackers()
+    if not active:
+        return "You have no active flight price trackers to sync to Google Calendar."
+
+    synced = []
+    for t in active:
+        price = t.get("lowest_seen_price", t.get("baseline_price", 0))
+        airline = t.get("best_airline", "Unknown")
+        ok, res = sync_price_drop_to_calendar(
+            tracker=t,
+            price=price,
+            drop_amount=0,
+            airline=airline,
+        )
+        if ok:
+            synced.append(f"{t['origin']} → {t['destination']} (${price} USD on {airline})")
+
+    if synced:
+        return f"Added low price flight deal notification to Google Calendar for: {', '.join(synced)}."
+    else:
+        return "Failed to sync flight deals to Google Calendar."

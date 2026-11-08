@@ -535,11 +535,11 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "flight_tracker",
-        "description": "Sets up autonomous twice-daily flight price tracking (morning at 8:30 AM and evening at 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops with exact baggage filters.",
+        "description": "Sets up autonomous twice-daily flight price tracking (morning at 8:30 AM and evening at 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops (desktop chime + Google Calendar notification event).",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":       {"type": "STRING",  "description": "track | list | cancel"},
+                "action":       {"type": "STRING",  "description": "track | list | cancel | sync_calendar"},
                 "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
                 "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
                 "date":         {"type": "STRING",  "description": "Departure date for the flight"},
@@ -989,12 +989,14 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "flight_tracker":
-                from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker
+                from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker, sync_active_trackers_to_calendar
                 action = (args.get("action") or "track").lower().strip()
                 if action == "list":
                     r = list_flight_trackers()
                 elif action == "cancel":
                     r = cancel_flight_tracker(origin=args.get("origin", ""), destination=args.get("destination", ""))
+                elif action in ("sync_calendar", "sync_to_calendar", "calendar_sync"):
+                    r = sync_active_trackers_to_calendar()
                 else:
                     res = await loop.run_in_executor(None, lambda: add_flight_tracker(
                         origin=args.get("origin", ""),

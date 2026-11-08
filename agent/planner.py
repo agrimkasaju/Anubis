@@ -113,7 +113,7 @@ flight_finder
   airline: string (optional)
 
 flight_tracker
-  action: "track" | "list" | "cancel" (required)
+  action: "track" | "list" | "cancel" | "sync_calendar" (required)
   origin: string (for track/cancel)
   destination: string (for track/cancel)
   date: string (for track)

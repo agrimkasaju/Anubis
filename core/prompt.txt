@@ -68,10 +68,10 @@ TOOL SELECTION:
   * To list events on a specific date (e.g. "what's on my calendar for Dec 19?"), call action="list_events", date="YYYY-MM-DD" or "Month Day".
   * To schedule reminders, use action="set_reminder" with message, date, and time. Supports single-time or daily recurring across a date range (e.g. start_date="today", end_date="next Saturday").
   * To delete/cancel reminders or events, use action="delete_reminder" with query="...". NEVER say "I can't remove reminders".
-  * Google Calendar is strictly for user personal events and tasks. Flight price tracking is NOT stored in Google Calendar.
-- flight_tracker → Sets up twice-daily autonomous background flight price tracking (at 8:30 AM and 6:30 PM) over a date window, monitoring fares headlessly and alerting via desktop notification and voice only when prices drop. Stored locally in data/flight_trackers.json.
+  * Google Calendar is strictly for user personal events, tasks, and flight price drop deal notifications (e.g. ✈️ Flight Deal).
+- flight_tracker → Sets up twice-daily autonomous background flight price tracking (at 8:30 AM and 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops via desktop notification, audio chime, and syncing a Google Calendar deal notification event with pop-up alert. Stored locally in data/flight_trackers.json.
   * Use action="track" whenever the user asks to "track flight prices", "monitor flights", or "remind me to check flight prices until [date]". Enforces baggage filters (carry_on, checked_bags, or both).
   * Use action="list" when the user asks what flights are being tracked or asks about active flight monitors.
   * Use action="cancel" to stop flight price tracking.
-  * NEVER confuse flight tracking with Google Calendar events or search Google Calendar for flight price tracking.
+  * Use action="sync_calendar" if user wants to sync current flight deals/alerts to Google Calendar.
 - open_app → ONLY for launching apps (terminal, settings, browser, files, code). System is Pop!_OS / COSMIC Linux; terminal is "terminal" or "cosmic-term", settings is "settings" or "cosmic-settings". Never suggest Windows PowerShell or cmd.
