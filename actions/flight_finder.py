@@ -101,17 +101,17 @@ def _build_google_flights_url(
     destination_enc = quote_plus(destination)
 
     if return_date:
-        trip = f"Round+trip+flights+from+{origin_enc}+to+{destination_enc}+on+{date}+returning+{return_date}"
+        trip = f"Flights+from+{origin_enc}+to+{destination_enc}+on+{date}+returning+{return_date}"
     else:
-        trip = f"One+way+flights+from+{origin_enc}+to+{destination_enc}+on+{date}"
+        trip = f"Flights+from+{origin_enc}+to+{destination_enc}+on+{date}"
 
-    return (
-        f"https://www.google.com/travel/flights"
-        f"?q={trip}"
-        f"&curr=USD"
-        f"&cabin={cabin_code}"
-        f"&adults={passengers}"
-    )
+    url = f"https://www.google.com/travel/flights?q={trip}&curr=USD"
+    if passengers > 1:
+        url += f"&adults={passengers}"
+    if cabin.lower() != "economy":
+        cabin_code = _CABIN_CODE.get(cabin.lower(), "1")
+        url += f"&cabin={cabin_code}"
+    return url
 
 
 def _parse_flight_card(aria: str, raw_text: str) -> dict:
@@ -239,9 +239,17 @@ async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> 
                 await add_checked.click()
                 await asyncio.sleep(0.2)
 
-    await page.keyboard.press("Escape")
+    # Apply bag filters by clicking Done on the dialog
+    done_clicked = False
+    for db in await page.query_selector_all('button:has-text("Done")'):
+        if await db.is_visible():
+            await db.click()
+            done_clicked = True
+            break
+    if not done_clicked:
+        await page.keyboard.press("Escape")
     # Wait for Google Flights to re-sort results with bag fees included
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(2.0)
 
 
 async def _scrape_flights_async(
@@ -330,13 +338,18 @@ async def scrape_flights_headless_async(
         headless=True,
         args=["--no-sandbox", "--disable-setuid-sandbox"]
     )
-    page = await browser.new_page(viewport={"width": 1280, "height": 800})
+    context = await browser.new_context(
+        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 800}
+    )
+    page = await context.new_page()
 
     url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=20000)
 
-        for _ in range(12):
+        cards = []
+        for _ in range(25):
             await asyncio.sleep(0.5)
             cards = await page.query_selector_all("li.pIav2d")
             if cards:
@@ -345,7 +358,12 @@ async def scrape_flights_headless_async(
         if carry_on > 0 or checked_bags > 0:
             await _apply_bag_filters(page, carry_on, checked_bags)
 
-        cards = await page.query_selector_all("li.pIav2d")
+        cards = []
+        for _ in range(25):
+            await asyncio.sleep(0.5)
+            cards = await page.query_selector_all("li.pIav2d")
+            if cards:
+                break
         outbound: list[dict] = []
         for c in cards[:5]:
             link = await c.query_selector("div.JMc5Xc")
