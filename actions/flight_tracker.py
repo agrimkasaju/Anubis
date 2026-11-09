@@ -230,7 +230,7 @@ def add_flight_tracker(
         "status": "ACTIVE",
         "created_at": now.isoformat(),
         "expires_at": expires_at,
-        "poll_times": ["08:30", "18:30"],
+        "poll_times": ["17:00", "20:30"],
         "origin": origin,
         "destination": destination,
         "date": dep_date,
@@ -284,7 +284,8 @@ def add_flight_tracker(
         f"Tracking flights from {origin} to {destination} ({dep_date}"
         f"{' to ' + ret_date if ret_date else ''}){bag_str}. "
         f"Baseline price is ${baseline_price} USD on {best_airline}. "
-        f"I'll poll every morning and evening at 8:30 AM and 6:30 PM until {expires_at[:10]} "
+        f"I'll poll during your evening window at 5:00 PM and 8:30 PM until {expires_at[:10]} "
+        f"(with automatic catch-up if your computer turns on past 5:00 PM) "
         f"and alert you immediately if the price drops."
     )
     return {"status": "success", "tracker": tracker, "message": msg}

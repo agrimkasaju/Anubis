@@ -535,7 +535,7 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "flight_tracker",
-        "description": "Sets up autonomous twice-daily flight price tracking (morning at 8:30 AM and evening at 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops (desktop chime + Google Calendar notification event).",
+        "description": "Sets up autonomous background flight price tracking tailored to evening laptop hours (5:00 PM and 8:30 PM with wake catch-up until 9:30 PM), alerting on price drops via desktop chime and Google Calendar deal notifications.",
         "parameters": {
             "type": "OBJECT",
             "properties": {

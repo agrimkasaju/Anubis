@@ -69,7 +69,7 @@ TOOL SELECTION:
   * To schedule reminders, use action="set_reminder" with message, date, and time. Supports single-time or daily recurring across a date range (e.g. start_date="today", end_date="next Saturday").
   * To delete/cancel reminders or events, use action="delete_reminder" with query="...". NEVER say "I can't remove reminders".
   * Google Calendar is strictly for user personal events, tasks, and flight price drop deal notifications (e.g. ✈️ Flight Deal).
-- flight_tracker → Sets up twice-daily autonomous background flight price tracking (at 8:30 AM and 6:30 PM) over a date window, monitoring fares headlessly and alerting on price drops via desktop notification, audio chime, and syncing a Google Calendar deal notification event with pop-up alert. Stored locally in data/flight_trackers.json.
+- flight_tracker → Sets up autonomous background flight price tracking tailored to evening laptop hours (5:00 PM and 8:30 PM with automatic catch-up whenever laptop turns on past 5:00 PM until 9:30 PM), monitoring fares headlessly and alerting on price drops via desktop chime and Google Calendar deal events. Stored locally in data/flight_trackers.json.
   * Use action="track" whenever the user asks to "track flight prices", "monitor flights", or "remind me to check flight prices until [date]". Only set bags user asked for (if user says "with carry-on", set carry_on: 1, checked_bags: 0).
   * Use action="list" when the user asks what flights are being tracked or asks about active flight monitors.
   * Use action="cancel" to stop flight price tracking.
