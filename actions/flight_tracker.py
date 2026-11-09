@@ -80,11 +80,18 @@ def sync_price_drop_to_calendar(
 ) -> tuple[bool, str]:
     """
     Adds a Google Calendar notification event for a detected low price flight deal.
-    Sets a popup reminder so Google Calendar delivers a push notification to phone & desktop.
+    Sets as an all-day event on the current local day so it appears on the correct calendar date in every timezone.
     """
     try:
-        from actions.reminder import _add_calendar_event
+        from actions.google_auth import get_calendar_service
+        service = get_calendar_service(interactive=False)
+        if not service:
+            return False, "Google Calendar is not connected."
+
         now = datetime.now()
+        today_str = now.strftime("%Y-%m-%d")
+        tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+
         origin = tracker.get("origin", "Origin")
         destination = tracker.get("destination", "Destination")
         dep_date = tracker.get("date", "")
@@ -110,27 +117,28 @@ def sync_price_drop_to_calendar(
             f"• Best Fare: ${price} {currency}{saving_text}\n"
             f"• Airline: {best_airline}\n"
             f"• {bag_desc}\n"
-            f"• Alert Time: {now.strftime('%A, %b %d at %I:%M %p')}\n"
+            f"• Detected: {now.strftime('%A, %b %d at %I:%M %p')}\n"
         )
         if page_url:
             cal_desc += f"• Booking Link: {page_url}\n"
 
-        # Schedule starting 2 minutes from now with 0-min popup reminder so Google Calendar
-        # immediately triggers a notification alert across all synced devices
-        start_time = now + timedelta(minutes=2)
-        end_time = start_time + timedelta(minutes=30)
-        ok, link_or_err = _add_calendar_event(
-            title=cal_title,
-            start_dt=start_time,
-            end_dt=end_time,
-            description=cal_desc,
-            popup_minutes=0,
-        )
-        if ok:
-            print(f"[FlightTracker] 📅 Synced flight deal (${price}) to Google Calendar with notification: {cal_title}")
-        else:
-            print(f"[FlightTracker] ⚠️ Calendar sync notice: {link_or_err}")
-        return ok, link_or_err
+        # Delete any existing deal events for this route to avoid duplicates
+        try:
+            q_res = service.events().list(calendarId="primary", q=f"Flight Deal: {origin} → {destination}").execute()
+            for old_item in q_res.get("items", []):
+                service.events().delete(calendarId="primary", eventId=old_item["id"]).execute()
+        except Exception:
+            pass
+
+        body = {
+            "summary": cal_title,
+            "description": cal_desc,
+            "start": {"date": today_str},
+            "end": {"date": tomorrow_str},
+        }
+        created = service.events().insert(calendarId="primary", body=body).execute()
+        print(f"[FlightTracker] 📅 Synced flight deal (${price}) to Google Calendar on {today_str}: {cal_title}")
+        return True, created.get("htmlLink", "")
     except Exception as e:
         print(f"[FlightTracker] ⚠️ Calendar sync error: {e}")
         return False, str(e)
