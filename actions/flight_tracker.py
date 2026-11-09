@@ -71,16 +71,127 @@ def _send_desktop_notification(title: str, message: str):
         print(f"[FlightTracker] ⚠️ Notification failed: {e}")
 
 
+def _format_calendar_details(
+    tracker: dict,
+    price: int,
+    drop_amount: int = 0,
+    airline: Optional[str] = None,
+    page_url: Optional[str] = None,
+    flight_options: Optional[list[dict]] = None,
+    returning_options: Optional[list[dict]] = None,
+) -> tuple[str, str]:
+    now = datetime.now()
+    origin = tracker.get("origin", "Origin")
+    destination = tracker.get("destination", "Destination")
+    dep_date = tracker.get("date", "")
+    ret_date = tracker.get("return_date")
+    currency = tracker.get("currency", "USD")
+    best_airline = airline or tracker.get("best_airline", "Unknown")
+
+    bag_parts = []
+    if tracker.get("carry_on", 0) > 0:
+        bag_parts.append(f"{tracker['carry_on']} carry-on")
+    if tracker.get("checked_bags", 0) > 0:
+        bag_parts.append(f"{tracker['checked_bags']} checked bag(s)")
+    bag_desc = f"Included Bags: {', '.join(bag_parts)}" if bag_parts else "Included Bags: Base fare (0 bags)"
+
+    dates_desc = f"{dep_date} to {ret_date}" if ret_date else dep_date
+    saving_text = f" (Dropped by ${drop_amount}!)" if drop_amount > 0 else " (Target Low Price Deal)"
+
+    # Identify lowest overall and best nonstop from flight_options
+    opts = [f for f in (flight_options or tracker.get("top_options", [])) if _price_to_int(f.get("price", "999999")) < 999999]
+    cheapest = min(opts, key=lambda x: _price_to_int(x["price"])) if opts else None
+    nonstops = [f for f in opts if f.get("stops", 0) == 0]
+    best_nonstop = min(nonstops, key=lambda x: _price_to_int(x["price"])) if nonstops else None
+
+    # Title
+    if cheapest and best_nonstop and cheapest != best_nonstop:
+        c_price = _price_to_int(cheapest["price"])
+        ns_price = _price_to_int(best_nonstop["price"])
+        cal_title = f"✈️ Flight Deal: {origin} → {destination} (From ${c_price} | Nonstop ${ns_price} {currency})"
+    else:
+        cal_title = f"✈️ Flight Deal: {origin} → {destination} (${price} {currency})"
+
+    lines = [
+        "🎯 Low Price Flight Notification from Anubis",
+        "",
+        f"• Route: {origin} to {destination}",
+        f"• Travel Dates: {dates_desc}",
+        f"• Lowest Fare: ${price} {currency}{saving_text}",
+        f"• Airline: {best_airline}",
+        f"• {bag_desc}",
+        f"• Detected: {now.strftime('%A, %b %d at %I:%M %p')}",
+    ]
+
+    if opts:
+        lines.append("")
+        lines.append("────────────────────────────────────────")
+        lines.append("🏆 TOP FLIGHT OPTIONS BREAKDOWN:")
+        lines.append("")
+
+        seen_keys = set()
+        count = 0
+        for f in opts:
+            p_val = _price_to_int(f.get("price", "999999"))
+            f_air = f.get("airline", "Airline")
+            dep_t = f.get("departure", "")
+            arr_t = f.get("arrival", "")
+            stops = f.get("stops", 0)
+            stops_str = "Nonstop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
+            dur = f.get("duration", "")
+
+            key = (f_air, p_val, dep_t)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            count += 1
+
+            if f == cheapest:
+                badge = "🥇 Lowest Fare"
+            elif f == best_nonstop:
+                badge = "⚡ Best Nonstop"
+            else:
+                badge = f"Option {count}"
+
+            lines.append(f"{badge}: {f_air} — ${p_val} {currency}")
+            lines.append(f"   • Flight: {dep_t} → {arr_t} ({dur}, {stops_str})")
+            if f.get("layover"):
+                lines.append(f"   • Layovers: {f['layover']}")
+
+            # If return options exist and match first option
+            if returning_options and count == 1:
+                ret0 = returning_options[0]
+                r_air = ret0.get("airline", f_air)
+                r_dep = ret0.get("departure", "")
+                r_arr = ret0.get("arrival", "")
+                r_stops = "Nonstop" if ret0.get("stops", 0) == 0 else f"{ret0.get('stops')} stop(s)"
+                lines.append(f"   • Return Leg: {r_air} {r_dep} → {r_arr} ({r_stops})")
+
+            lines.append("")
+            if count >= 4:
+                break
+
+        lines.append("────────────────────────────────────────")
+
+    if page_url:
+        lines.append(f"🔗 Google Flights Booking Link:\n{page_url}")
+
+    return cal_title, "\n".join(lines)
+
+
 def sync_price_drop_to_calendar(
     tracker: dict,
     price: int,
     drop_amount: int = 0,
     airline: Optional[str] = None,
     page_url: Optional[str] = None,
+    flight_options: Optional[list[dict]] = None,
+    returning_options: Optional[list[dict]] = None,
 ) -> tuple[bool, str]:
     """
     Adds a Google Calendar notification event for a detected low price flight deal.
     Sets as an all-day event on the current local day so it appears on the correct calendar date in every timezone.
+    Includes full flight details (lowest fare, best nonstop, times, stops, layovers, booking link).
     """
     try:
         from actions.google_auth import get_calendar_service
@@ -94,33 +205,16 @@ def sync_price_drop_to_calendar(
 
         origin = tracker.get("origin", "Origin")
         destination = tracker.get("destination", "Destination")
-        dep_date = tracker.get("date", "")
-        ret_date = tracker.get("return_date")
-        currency = tracker.get("currency", "USD")
-        best_airline = airline or tracker.get("best_airline", "Unknown")
 
-        bag_parts = []
-        if tracker.get("carry_on", 0) > 0:
-            bag_parts.append(f"{tracker['carry_on']} carry-on")
-        if tracker.get("checked_bags", 0) > 0:
-            bag_parts.append(f"{tracker['checked_bags']} checked bag(s)")
-        bag_desc = f"Included Bags: {', '.join(bag_parts)}" if bag_parts else "Included Bags: Base fare (0 bags)"
-
-        dates_desc = f"{dep_date} to {ret_date}" if ret_date else dep_date
-        saving_text = f" (Dropped by ${drop_amount}!)" if drop_amount > 0 else " (Target Low Price Deal)"
-
-        cal_title = f"✈️ Flight Deal: {origin} → {destination} (${price} {currency})"
-        cal_desc = (
-            f"🎯 Low Price Flight Notification from Anubis\n\n"
-            f"• Route: {origin} to {destination}\n"
-            f"• Travel Dates: {dates_desc}\n"
-            f"• Best Fare: ${price} {currency}{saving_text}\n"
-            f"• Airline: {best_airline}\n"
-            f"• {bag_desc}\n"
-            f"• Detected: {now.strftime('%A, %b %d at %I:%M %p')}\n"
+        cal_title, cal_desc = _format_calendar_details(
+            tracker=tracker,
+            price=price,
+            drop_amount=drop_amount,
+            airline=airline,
+            page_url=page_url,
+            flight_options=flight_options,
+            returning_options=returning_options,
         )
-        if page_url:
-            cal_desc += f"• Booking Link: {page_url}\n"
 
         # Delete any existing deal events for this route to avoid duplicates
         try:
@@ -205,24 +299,22 @@ def add_flight_tracker(
         airline=airline,
     )
 
-    baseline_price = 999999
-    best_airline = airline or "Unknown"
-    itinerary_desc = "Flight details unavailable"
+    candidates = [f for f in (outbound + returning) if _price_to_int(f.get("price")) < 999999]
+    if airline and candidates:
+        pref = [f for f in candidates if airline.lower() in f.get("airline", "").lower()]
+        if pref:
+            candidates = pref
 
-    if returning:
-        cheapest_ret = min(returning, key=lambda x: _price_to_int(x.get("price", "999999")))
-        baseline_price = _price_to_int(cheapest_ret.get("price", 999999))
-        best_airline = cheapest_ret.get("airline") or (outbound[0].get("airline") if outbound else "Unknown")
-        out0 = outbound[0] if outbound else {}
-        itinerary_desc = (
-            f"Outbound: {out0.get('airline', 'N/A')} {out0.get('departure', '')}-{out0.get('arrival', '')}; "
-            f"Return: {cheapest_ret.get('airline', 'N/A')} {cheapest_ret.get('departure', '')}-{cheapest_ret.get('arrival', '')}"
-        )
-    elif outbound:
-        cheapest_out = min(outbound, key=lambda x: _price_to_int(x.get("price", "999999")))
-        baseline_price = _price_to_int(cheapest_out.get("price", 999999))
-        best_airline = cheapest_out.get("airline") or "Unknown"
-        itinerary_desc = f"Departing {cheapest_out.get('departure', '')}-{cheapest_out.get('arrival', '')}"
+    best_candidate = min(candidates, key=lambda x: _price_to_int(x.get("price"))) if candidates else {}
+    baseline_price = _price_to_int(best_candidate.get("price", 999999))
+    best_airline = best_candidate.get("airline") or (airline or "Unknown")
+
+    nonstops = [f for f in (outbound + returning) if f.get("stops", 0) == 0 and _price_to_int(f.get("price")) < 999999]
+    best_nonstop = min(nonstops, key=lambda x: _price_to_int(x.get("price"))) if nonstops else None
+
+    itinerary_desc = f"{best_airline} {best_candidate.get('departure', '')}-{best_candidate.get('arrival', '')} ({best_candidate.get('duration', '')})"
+    if best_nonstop and best_nonstop != best_candidate:
+        itinerary_desc += f"; Nonstop: {best_nonstop.get('airline')} at ${best_nonstop.get('price')}"
 
     tracker_id = f"ft_{uuid.uuid4().hex[:8]}"
     tracker = {
@@ -245,6 +337,7 @@ def add_flight_tracker(
         "currency": "USD",
         "best_airline": best_airline,
         "itinerary": itinerary_desc,
+        "top_options": outbound[:5],
         "history": [
             {
                 "timestamp": now.isoformat(),
@@ -268,6 +361,8 @@ def add_flight_tracker(
             drop_amount=0,
             airline=best_airline,
             page_url=page_url,
+            flight_options=outbound,
+            returning_options=returning,
         )
     except Exception as ce:
         print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
@@ -341,17 +436,15 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
         airline=tracker.get("airline"),
     )
 
-    current_price = 999999
-    current_airline = tracker.get("best_airline", "Unknown")
+    candidates = [f for f in (outbound + returning) if _price_to_int(f.get("price")) < 999999]
+    if tracker.get("airline") and candidates:
+        pref = [f for f in candidates if tracker["airline"].lower() in f.get("airline", "").lower()]
+        if pref:
+            candidates = pref
 
-    if returning:
-        cheapest_ret = min(returning, key=lambda x: _price_to_int(x.get("price", "999999")))
-        current_price = _price_to_int(cheapest_ret.get("price", 999999))
-        current_airline = cheapest_ret.get("airline") or (outbound[0].get("airline") if outbound else current_airline)
-    elif outbound:
-        cheapest_out = min(outbound, key=lambda x: _price_to_int(x.get("price", "999999")))
-        current_price = _price_to_int(cheapest_out.get("price", 999999))
-        current_airline = cheapest_out.get("airline") or current_airline
+    best_candidate = min(candidates, key=lambda x: _price_to_int(x.get("price"))) if candidates else {}
+    current_price = _price_to_int(best_candidate.get("price", 999999))
+    current_airline = best_candidate.get("airline") or tracker.get("best_airline", "Unknown")
 
     if current_price >= 999999:
         print(f"[FlightTracker] ⚠️ Could not extract valid price for tracker {t_id}")
@@ -368,6 +461,8 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
     for t in data.get("trackers", []):
         if t["id"] == t_id:
             t["last_polled"] = now.isoformat()
+            if outbound:
+                t["top_options"] = outbound[:5]
             t["history"].append({
                 "timestamp": now.isoformat(),
                 "price": current_price,
@@ -408,6 +503,8 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
                         drop_amount=drop_amount,
                         airline=current_airline,
                         page_url=page_url,
+                        flight_options=outbound,
+                        returning_options=returning,
                     )
                 except Exception as ce:
                     print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
@@ -511,6 +608,7 @@ def sync_active_trackers_to_calendar() -> str:
             price=price,
             drop_amount=0,
             airline=airline,
+            flight_options=t.get("top_options"),
         )
         if ok:
             synced.append(f"{t['origin']} → {t['destination']} (${price} USD on {airline})")
