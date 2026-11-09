@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { NexusHeader } from './components/NexusHeader';
 import { JobBridgeCard } from './components/JobBridgeCard';
 import { JobPipelineCard } from './components/JobPipelineCard';
+import { JobHistoryCard } from './components/JobHistoryCard';
 import { QuickSearchCard } from './components/QuickSearchCard';
 import { StockIntelligenceCard } from './components/StockIntelligenceCard';
 import { SystemStatusCard } from './components/SystemStatusCard';
@@ -107,6 +108,10 @@ export const App: React.FC = () => {
           <JobPipelineCard
             status={pipelineStatus}
             onRefresh={refreshFeeds}
+          />
+
+          <JobHistoryCard
+            onHistoryChange={refreshFeeds}
           />
 
           <QuickSearchCard />

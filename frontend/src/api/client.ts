@@ -1,5 +1,5 @@
 import { getAuthHeaders, getStoredToken } from '../utils/auth';
-import { JobPendingResponse, PipelineStatus, StockData, SearchResult } from '../types/orion';
+import { JobPendingResponse, PipelineStatus, StockData, SearchResult, JobHistoryResponse } from '../types/orion';
 
 export async function fetchPendingJob(): Promise<JobPendingResponse> {
   const token = getStoredToken();
@@ -110,4 +110,41 @@ export function getJobPdfUrl(fileName: string): string {
   const params = new URLSearchParams({ file: fileName });
   if (token) params.set('token', token);
   return `/api/job/pdf?${params.toString()}`;
+}
+
+export async function fetchJobHistory(): Promise<JobHistoryResponse> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/history?token=${encodeURIComponent(token)}` : '/api/job/history';
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error(`Failed to fetch job history: ${res.statusText}`);
+  return res.json();
+}
+
+export async function removeJobHistory(jobKey: string): Promise<{ status: string; job_key: string; message?: string }> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/history/remove?token=${encodeURIComponent(token)}` : '/api/job/history/remove';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ job_key: jobKey }),
+  });
+  if (!res.ok) throw new Error(`Failed to remove job: ${res.statusText}`);
+  return res.json();
+}
+
+export async function reapplyJob(job: {
+  job_key: string;
+  company: string;
+  title: string;
+  apply_url?: string;
+}): Promise<{ status: string; job_key: string; pid?: number; message?: string }> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/history/reapply?token=${encodeURIComponent(token)}` : '/api/job/history/reapply';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(job),
+  });
+  if (!res.ok) throw new Error(`Failed to reapply job: ${res.statusText}`);
+  return res.json();
 }

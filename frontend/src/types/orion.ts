@@ -8,6 +8,8 @@ export interface PendingJob {
   resume_pdf?: string;
   cover_letter_pdf?: string;
   combined_pdf?: string;
+  cv_pdf?: string;
+  cl_pdf?: string;
   [key: string]: unknown;
 }
 
@@ -51,4 +53,23 @@ export interface SystemMeta {
   tailscaleAddr: string;
   remoteLlmHost: string;
   isAuthed: boolean;
+}
+
+export interface JobHistoryItem {
+  job_key: string;
+  company: string;
+  title: string;
+  apply_url?: string;
+  status: 'applied' | 'skipped' | string;
+  timestamp: number;
+  iso_date?: string;
+  stage?: string;
+  resume_pdf?: string;
+  cover_letter_pdf?: string;
+  combined_pdf?: string;
+}
+
+export interface JobHistoryResponse {
+  applied: JobHistoryItem[];
+  skipped: JobHistoryItem[];
 }

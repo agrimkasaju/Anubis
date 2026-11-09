@@ -107,7 +107,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => openPreview(pendingJob.resume_pdf || 'resume.pdf')}
+                  onClick={() => openPreview(pendingJob.resume_pdf || pendingJob.cv_pdf || 'resume.pdf')}
                   className="flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl bg-slate-950/70 border border-sky-900/40 hover:border-cyan-500/50 text-slate-200 text-xs font-mono transition"
                 >
                   <FileText className="w-3.5 h-3.5 text-cyan-400" />
@@ -115,7 +115,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => openPreview(pendingJob.cover_letter_pdf || 'cover_letter.pdf')}
+                  onClick={() => openPreview(pendingJob.cover_letter_pdf || pendingJob.cl_pdf || 'cover_letter.pdf')}
                   className="flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl bg-slate-950/70 border border-sky-900/40 hover:border-cyan-500/50 text-slate-200 text-xs font-mono transition"
                 >
                   <Mail className="w-3.5 h-3.5 text-cyan-400" />

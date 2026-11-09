@@ -81,6 +81,7 @@ TAILSCALE_IP = get_tailscale_ip()
 REMOTE_LLM_HOST = str(os.getenv("REMOTE_LLM_HOST") or _config.get("remote_llm_host") or "").strip()
 
 from job_bridge import bridge
+from job_history import get_job_history, remove_from_job_history, record_job_history
 import actions.stock_actions
 # Suppress opening desktop browser tabs during dashboard stock calls
 actions.stock_actions.open_dashboard = lambda: None
@@ -587,8 +588,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             // Update PDF download links
             const tParam = token ? `&token=${encodeURIComponent(token)}` : '';
             const comp = data.job.company || 'Application';
-            const cvFile = data.job.cv_pdf || `${comp}_Resume.pdf`;
-            const clFile = data.job.cl_pdf || `${comp}_Cover_Letter.pdf`;
+            const cvFile = data.job.resume_pdf || data.job.cv_pdf || `${comp}_Resume.pdf`;
+            const clFile = data.job.cover_letter_pdf || data.job.cl_pdf || `${comp}_Cover_Letter.pdf`;
             const combFile = data.job.combined_pdf || `${comp}_Combined_Application.pdf`;
 
             document.getElementById('pdf-resume-link').href = `/api/job/pdf?file=${encodeURIComponent(cvFile)}${tParam}`;
@@ -1161,7 +1162,8 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     chart_file = f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart.png"
     if not os.path.exists(chart_file):
         try:
-            req_img = urllib.request.Request(f"http://localhost:8000/charts/{symbol}_chart.png")
+            stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
+            req_img = urllib.request.Request(f"{stock_server}/charts/{symbol}_chart.png")
             with urllib.request.urlopen(req_img, timeout=4) as res_img:
                 tmp_chart = f"/tmp/{symbol}_pdf_chart.png"
                 with open(tmp_chart, "wb") as f_img:
@@ -1201,6 +1203,67 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
         pdf.multi_cell(0, 4.5, clean_analysis)
 
     return bytes(pdf.output())
+
+
+def launch_job_pipeline(mode: str = "scrape", url: str = "", company: str = "", title: str = "", seasons: str = "all") -> tuple[bool, int | None, str]:
+    """Helper to start the headless job search pipeline in background with proper environment."""
+    python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
+    script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
+
+    cmd = [python_bin, script_path, "--mode", mode]
+    if mode == "manual" and url:
+        cmd.extend(["--url", url])
+        if company:
+            cmd.extend(["--company", company])
+        if title:
+            cmd.extend(["--title", title])
+    elif mode == "scrape" and seasons and seasons != "all":
+        cmd.extend(["--seasons", seasons])
+
+    env = os.environ.copy()
+    job_env_file = Path("/home/grim/Downloads/ai_job_search/.env")
+    job_keys_file = Path("/home/grim/Downloads/ai_job_search/ai_job_search/config/api_keys.json")
+    if job_env_file.exists():
+        try:
+            for line in job_env_file.read_text(encoding="utf-8").splitlines():
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip().strip("'\"")
+        except Exception:
+            pass
+    if job_keys_file.exists():
+        try:
+            k_data = json.loads(job_keys_file.read_text(encoding="utf-8"))
+            if "gemini_api_key" in k_data:
+                env["GEMINI_API_KEY"] = k_data["gemini_api_key"]
+                env["GOOGLE_API_KEY"] = k_data["gemini_api_key"]
+            if "groq_api_key" in k_data:
+                env["GROQ_API_KEY"] = k_data["groq_api_key"]
+        except Exception:
+            pass
+
+    try:
+        log_file = open("/home/grim/Downloads/ai_job_search/ai_job_search/headless.log", "a")
+        proc = subprocess.Popen(
+            cmd,
+            cwd="/home/grim/Downloads/ai_job_search/ai_job_search",
+            env=env,
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True
+        )
+        status_file = Path.home() / ".orion_job_status.json"
+        status_file.write_text(json.dumps({
+            "running": True,
+            "status_text": "Starting background pipeline...",
+            "current_job": f"{company or 'Auto'} {title or ''}".strip(),
+            "progress": "Starting",
+            "pid": proc.pid,
+            "timestamp": time.time()
+        }))
+        return True, proc.pid, "Pipeline started in background."
+    except Exception as e:
+        return False, None, str(e)
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -1319,6 +1382,30 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        # Stock Chart Image Proxy (Allowed without auth header for standard <img> tags)
+        if path == "/api/stock/chart":
+            ticker = qs.get("ticker", [""])[0].strip().upper()
+            if not ticker or not re.match(r"^[A-Z0-9.-]{1,10}$", ticker):
+                self._send_json({"error": "Invalid ticker"}, status=400)
+                return
+            try:
+                stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
+                chart_url = f"{stock_server}/charts/{ticker}_chart.png"
+                req = urllib.request.Request(chart_url)
+                with urllib.request.urlopen(req, timeout=5) as res:
+                    img_bytes = res.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(img_bytes)))
+                    self.send_header("Cache-Control", "public, max-age=60")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(img_bytes)
+                    return
+            except Exception as e:
+                self._send_json({"error": f"Chart not found: {e}"}, status=404)
+                return
+
         # Security check for all API endpoints
         if not self._check_auth():
             self._send_json({"error": "Unauthorized. Invalid or missing token."}, status=401)
@@ -1328,6 +1415,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/job/pending":
             pending = bridge.get_pending_job()
             if pending:
+                # Ensure alias keys exist so both frontend & backend conventions work seamlessly
+                if "cv_pdf" in pending and "resume_pdf" not in pending:
+                    pending["resume_pdf"] = pending["cv_pdf"]
+                if "cl_pdf" in pending and "cover_letter_pdf" not in pending:
+                    pending["cover_letter_pdf"] = pending["cl_pdf"]
+                if "resume_pdf" in pending and "cv_pdf" not in pending:
+                    pending["cv_pdf"] = pending["resume_pdf"]
+                if "cover_letter_pdf" in pending and "cl_pdf" not in pending:
+                    pending["cl_pdf"] = pending["cover_letter_pdf"]
                 self._send_json({"pending": True, "job": pending})
             else:
                 self._send_json({"pending": False})
@@ -1356,6 +1452,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"running": False, "status_text": "Idle"})
             return
 
+        # API: Query Job History (Applied and Skipped)
+        if path == "/api/job/history":
+            history = get_job_history()
+            self._send_json(history)
+            return
+
         # API: Serve / Download Generated Job Application PDFs
         if path == "/api/job/pdf":
             req_file = qs.get("file", [""])[0].strip()
@@ -1364,11 +1466,66 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
 
             clean_name = Path(req_file).name
-            if not clean_name.endswith(".pdf"):
+            if not clean_name.lower().endswith(".pdf"):
                 clean_name += ".pdf"
 
             pdf_dir = Path("/home/grim/Downloads/ai_job_search/ai_job_search/output").resolve()
             target_pdf = (pdf_dir / clean_name).resolve()
+
+            # Intelligent resolution for generic names (e.g. resume.pdf, cover_letter.pdf, combined.pdf)
+            if not (target_pdf.is_relative_to(pdf_dir) and target_pdf.is_file()):
+                generic_lower = clean_name.lower()
+                pending = bridge.get_pending_job() or {}
+
+                resolved_path = None
+                if generic_lower in ("resume.pdf", "cv.pdf"):
+                    job_file = pending.get("resume_pdf") or pending.get("cv_pdf")
+                    if job_file:
+                        cand = (pdf_dir / Path(job_file).name).resolve()
+                        if cand.is_file() and cand.is_relative_to(pdf_dir):
+                            resolved_path = cand
+                    if not resolved_path:
+                        resumes = sorted(
+                            pdf_dir.glob("*[Rr]esume*.pdf"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        if resumes:
+                            resolved_path = resumes[0]
+
+                elif generic_lower in ("cover_letter.pdf", "coverletter.pdf", "cl.pdf"):
+                    job_file = pending.get("cover_letter_pdf") or pending.get("cl_pdf")
+                    if job_file:
+                        cand = (pdf_dir / Path(job_file).name).resolve()
+                        if cand.is_file() and cand.is_relative_to(pdf_dir):
+                            resolved_path = cand
+                    if not resolved_path:
+                        letters = sorted(
+                            pdf_dir.glob("*[Cc]over*[Ll]etter*.pdf"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        if letters:
+                            resolved_path = letters[0]
+
+                elif generic_lower in ("combined.pdf", "combined_application.pdf"):
+                    job_file = pending.get("combined_pdf")
+                    if job_file:
+                        cand = (pdf_dir / Path(job_file).name).resolve()
+                        if cand.is_file() and cand.is_relative_to(pdf_dir):
+                            resolved_path = cand
+                    if not resolved_path:
+                        combineds = sorted(
+                            pdf_dir.glob("*[Cc]ombined*.pdf"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        if combineds:
+                            resolved_path = combineds[0]
+
+                if resolved_path and resolved_path.is_file() and resolved_path.is_relative_to(pdf_dir):
+                    target_pdf = resolved_path
+                    clean_name = target_pdf.name
 
             if not target_pdf.is_relative_to(pdf_dir) or not target_pdf.is_file():
                 self._send_json({"error": f"PDF not found: {clean_name}"}, status=404)
@@ -1413,33 +1570,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": f"PDF generation error: {e}"}, status=500)
                 return
 
-        # API: Proxy Stock Chart Image
-        if path == "/api/stock/chart":
-            ticker = qs.get("ticker", [""])[0].strip().upper()
-            if not ticker or not re.match(r"^[A-Z0-9.-]{1,10}$", ticker):
-                self._send_json({"error": "Invalid ticker"}, status=400)
-                return
-            try:
-                chart_url = f"http://localhost:8000/charts/{ticker}_chart.png"
-                req = urllib.request.Request(chart_url)
-                with urllib.request.urlopen(req, timeout=5) as res:
-                    img_bytes = res.read()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/png")
-                    self.send_header("Content-Length", str(len(img_bytes)))
-                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(img_bytes)
-                    return
-            except Exception as e:
-                self._send_json({"error": f"Chart not found: {e}"}, status=404)
-                return
-
         # API: Query Recent Stock History
         if path == "/api/stock/history":
             try:
-                req = urllib.request.Request("http://localhost:8000/api/history")
+                stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
+                req = urllib.request.Request(f"{stock_server}/api/history")
                 with urllib.request.urlopen(req, timeout=3) as res:
                     raw_hist = json.loads(res.read().decode("utf-8"))
                 hist = []
@@ -1484,7 +1619,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
             try:
                 ensure_llm_connected()
-                req = urllib.request.Request(f"http://localhost:8000/analyze/{symbol}")
+                stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
+                req = urllib.request.Request(f"{stock_server}/analyze/{symbol}")
                 try:
                     with urllib.request.urlopen(req, timeout=60) as res:
                         data = json.loads(res.read().decode("utf-8"))
@@ -1627,9 +1763,16 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 if os.path.exists(output_dir):
                     subprocess.Popen(["xdg-open", output_dir])
 
+                # 3. Record in persistent history as applied
+                record_job_history(job, "applied")
+
                 bridge.resolve_approval(True)
                 self._send_json({"status": "resolved", "approved": True, "message": "Job approved and opened on desktop."})
             else:
+                if job:
+                    # Record in persistent history as skipped
+                    record_job_history(job, "skipped")
+
                 bridge.resolve_approval(False)
                 self._send_json({"status": "resolved", "approved": False, "message": "Job skipped."})
             return
@@ -1642,64 +1785,50 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             title = body.get("title", "").strip()
             seasons = body.get("seasons", "all").strip()
 
-            python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
-            script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
+            success, pid, msg = launch_job_pipeline(mode=mode, url=url, company=company, title=title, seasons=seasons)
+            if success:
+                self._send_json({"status": "started", "pid": pid, "message": msg})
+            else:
+                self._send_json({"error": msg}, status=500)
+            return
 
-            cmd = [python_bin, script_path, "--mode", mode]
-            if mode == "manual" and url:
-                cmd.extend(["--url", url])
-                if company:
-                    cmd.extend(["--company", company])
-                if title:
-                    cmd.extend(["--title", title])
-            elif mode == "scrape" and seasons and seasons != "all":
-                cmd.extend(["--seasons", seasons])
+        # API: Remove Job from History (Unlocks for reapplication)
+        if path == "/api/job/history/remove":
+            job_key = body.get("job_key", "").strip()
+            if not job_key:
+                self._send_json({"error": "Missing job_key"}, status=400)
+                return
+            remove_from_job_history(job_key)
+            self._send_json({"status": "removed", "job_key": job_key, "message": "Job removed from history."})
+            return
 
-            env = os.environ.copy()
-            # Use ai_job_search's dedicated keys, NOT Anubis keys!
-            job_env_file = Path("/home/grim/Downloads/ai_job_search/.env")
-            job_keys_file = Path("/home/grim/Downloads/ai_job_search/ai_job_search/config/api_keys.json")
-            if job_env_file.exists():
-                try:
-                    for line in job_env_file.read_text(encoding="utf-8").splitlines():
-                        if "=" in line and not line.startswith("#"):
-                            k, v = line.split("=", 1)
-                            env[k.strip()] = v.strip().strip("'\"")
-                except Exception:
-                    pass
-            if job_keys_file.exists():
-                try:
-                    k_data = json.loads(job_keys_file.read_text(encoding="utf-8"))
-                    if "gemini_api_key" in k_data:
-                        env["GEMINI_API_KEY"] = k_data["gemini_api_key"]
-                        env["GOOGLE_API_KEY"] = k_data["gemini_api_key"]
-                    if "groq_api_key" in k_data:
-                        env["GROQ_API_KEY"] = k_data["groq_api_key"]
-                except Exception:
-                    pass
+        # API: Reapply to Job (Unlock and optionally launch manual tailoring pipeline)
+        if path == "/api/job/history/reapply":
+            job_key = body.get("job_key", "").strip()
+            company = body.get("company", "").strip()
+            title = body.get("title", "").strip()
+            apply_url = body.get("apply_url", "").strip()
 
-            try:
-                log_file = open("/home/grim/Downloads/ai_job_search/ai_job_search/headless.log", "a")
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd="/home/grim/Downloads/ai_job_search/ai_job_search",
-                    env=env,
-                    stdout=log_file,
-                    stderr=log_file,
-                    start_new_session=True
-                )
-                status_file = Path.home() / ".orion_job_status.json"
-                status_file.write_text(json.dumps({
-                    "running": True,
-                    "status_text": "Starting background pipeline...",
-                    "current_job": f"{company or 'Auto'} {title or ''}".strip(),
-                    "progress": "Starting",
-                    "pid": proc.pid,
-                    "timestamp": time.time()
-                }))
-                self._send_json({"status": "started", "pid": proc.pid, "message": "Pipeline started in background."})
-            except Exception as e:
-                self._send_json({"error": str(e)}, status=500)
+            if not job_key:
+                self._send_json({"error": "Missing job_key"}, status=400)
+                return
+
+            remove_from_job_history(job_key)
+
+            if apply_url and apply_url != "N/A":
+                success, pid, msg = launch_job_pipeline(mode="manual", url=apply_url, company=company, title=title)
+                self._send_json({
+                    "status": "reapplying",
+                    "job_key": job_key,
+                    "pid": pid,
+                    "message": f"Job unlocked. Started tailoring pipeline for {company}."
+                })
+            else:
+                self._send_json({
+                    "status": "unlocked",
+                    "job_key": job_key,
+                    "message": f"Job unlocked from history. Ready for reapplication."
+                })
             return
 
         # API: Stop Headless Job Search Pipeline

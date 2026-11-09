@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, ArrowUpRight, Share2, Eye, ChevronDown, ChevronUp, Loader2, Sparkles, X, Maximize2 } from 'lucide-react';
+import { TrendingUp, ArrowUpRight, Share2, Eye, ChevronDown, ChevronUp, Loader2, Sparkles, X, Maximize2, ImageOff } from 'lucide-react';
 import { StockData } from '../types/orion';
 import { fetchStockAnalysis, fetchStockHistory, downloadStockPdf } from '../api/client';
+import { getStoredToken } from '../utils/auth';
 
 export const StockIntelligenceCard: React.FC = () => {
   const [tickerInput, setTickerInput] = useState('');
@@ -12,7 +13,16 @@ export const StockIntelligenceCard: React.FC = () => {
   const [showFullAnalysis, setShowFullAnalysis] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [chartLightbox, setChartLightbox] = useState<string | null>(null);
+  const [chartError, setChartError] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const getChartImageUrl = (url: string | null) => {
+    if (!url) return '';
+    const token = getStoredToken();
+    const cleanUrl = url.startsWith('/') ? url : `/${url}`;
+    const sep = cleanUrl.includes('?') ? '&' : '?';
+    return token ? `${cleanUrl}${sep}token=${encodeURIComponent(token)}` : cleanUrl;
+  };
 
   useEffect(() => {
     fetchStockHistory()
@@ -20,6 +30,7 @@ export const StockIntelligenceCard: React.FC = () => {
         if (items && items.length > 0) {
           setRecentHistory(items);
           setStockData(items[0]);
+          setChartError(false);
         }
       })
       .catch(() => {});
@@ -31,6 +42,7 @@ export const StockIntelligenceCard: React.FC = () => {
 
     setLoading(true);
     setErrorMsg(null);
+    setChartError(false);
     try {
       const data = await fetchStockAnalysis(symbol);
       setStockData(data);
@@ -217,17 +229,27 @@ export const StockIntelligenceCard: React.FC = () => {
                   </button>
                 </div>
                 <div
-                  className="cursor-pointer group relative rounded-lg overflow-hidden border border-slate-900 bg-slate-950"
-                  onClick={() => setChartLightbox(stockData.chart_url)}
+                  className="cursor-pointer group relative rounded-lg overflow-hidden border border-slate-900 bg-slate-950 flex items-center justify-center min-h-[128px]"
+                  onClick={() => !chartError && setChartLightbox(stockData.chart_url)}
                 >
-                  <img
-                    src={stockData.chart_url}
-                    alt={`${stockData.symbol} chart`}
-                    className="w-full h-32 md:h-40 object-contain object-center group-hover:scale-[1.02] transition duration-300"
-                  />
-                  <div className="absolute inset-0 bg-cyan-950/20 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                    <Maximize2 className="w-5 h-5 text-cyan-300" />
-                  </div>
+                  {chartError ? (
+                    <div className="py-6 px-4 text-center space-y-1">
+                      <ImageOff className="w-5 h-5 text-slate-600 mx-auto" />
+                      <p className="text-[11px] font-mono text-slate-500">Candlestick chart not yet available</p>
+                    </div>
+                  ) : (
+                    <>
+                      <img
+                        src={getChartImageUrl(stockData.chart_url)}
+                        alt={`${stockData.symbol} chart`}
+                        onError={() => setChartError(true)}
+                        className="w-full h-32 md:h-40 object-contain object-center group-hover:scale-[1.02] transition duration-300"
+                      />
+                      <div className="absolute inset-0 bg-cyan-950/20 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
+                        <Maximize2 className="w-5 h-5 text-cyan-300" />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -305,7 +327,7 @@ export const StockIntelligenceCard: React.FC = () => {
               </button>
             </div>
             <img
-              src={chartLightbox}
+              src={getChartImageUrl(chartLightbox)}
               alt="Expanded Chart"
               className="w-full max-h-[75vh] object-contain rounded-xl bg-slate-950"
             />
