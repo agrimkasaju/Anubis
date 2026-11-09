@@ -1224,11 +1224,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _send_cors_headers(self):
         origin = self.headers.get("Origin", "")
-        host = self.headers.get("Host", "")
-        if origin and host and host in origin:
+        if origin:
             self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
 
     def _send_json(self, data: dict, status: int = 200):
         body = json.dumps(data).encode("utf-8")
@@ -1247,8 +1248,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def _render_html(self) -> bytes:
         tailscale_display = f"{TAILSCALE_IP}:{PORT}" if TAILSCALE_IP else "Not configured"
         remote_llm_display = f"{REMOTE_LLM_HOST} (Linked)" if REMOTE_LLM_HOST else "Disabled"
+        dist_index = BASE_DIR / "frontend" / "dist" / "index.html"
+        if dist_index.exists():
+            template = dist_index.read_text(encoding="utf-8")
+        else:
+            template = HTML_TEMPLATE
         rendered_html = (
-            HTML_TEMPLATE
+            template
             .replace("__TAILSCALE_ADDR__", tailscale_display)
             .replace("__REMOTE_LLM_HOST__", remote_llm_display)
         )
@@ -1280,6 +1286,37 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(html_bytes)))
             self.end_headers()
             self.wfile.write(html_bytes)
+            return
+
+        # Serve Vite Static Assets (/assets/*)
+        if path.startswith("/assets/"):
+            asset_dir = (BASE_DIR / "frontend" / "dist" / "assets").resolve()
+            clean_name = Path(path[len("/assets/"):]).name
+            target_asset = (asset_dir / clean_name).resolve()
+            if target_asset.is_relative_to(asset_dir) and target_asset.is_file():
+                ext = target_asset.suffix.lower()
+                content_type = {
+                    ".js": "application/javascript",
+                    ".css": "text/css",
+                    ".svg": "image/svg+xml",
+                    ".png": "image/png",
+                    ".jpg": "image/jpeg",
+                    ".woff": "font/woff",
+                    ".woff2": "font/woff2",
+                }.get(ext, "application/octet-stream")
+                try:
+                    data = target_asset.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception:
+                    pass
+            self.send_response(404)
+            self.end_headers()
             return
 
         # Security check for all API endpoints

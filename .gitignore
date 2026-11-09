@@ -13,3 +13,7 @@ dashboard.log
 *.log
 .env
 *.env
+.venv/
+frontend/node_modules/
+node_modules/
+

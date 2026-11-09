@@ -9,7 +9,7 @@ _cfg = get_config()
 _PORT = int(os.getenv("DASHBOARD_PORT") or _cfg.get("dashboard_port") or 8088)
 _HOST = os.getenv("DASHBOARD_HOST") or _cfg.get("dashboard_host") or "127.0.0.1"
 if _HOST == "0.0.0.0":
-    _HOST = "127.0.0.1"
+    _HOST = "127.0.0.1" 
 
 AUTH_TOKEN = os.getenv("DASHBOARD_TOKEN") or _cfg.get("dashboard_token", "")
 DASHBOARD_BASE_URL = f"http://{_HOST}:{_PORT}/"

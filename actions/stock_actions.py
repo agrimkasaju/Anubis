@@ -8,7 +8,7 @@ import requests
 
 def open_dashboard():
     """Reliably opens the stock dashboard on Linux (Pop!_OS) desktop."""
-    url = "http://localhost:8000"
+    url = STOCK_SERVER_URL
     try:
         # Check if running in Linux with xdg-open available
         if shutil.which("xdg-open"):
@@ -37,6 +37,7 @@ from config import get_config
 _cfg = get_config()
 REMOTE_LLM_HOST = str(os.getenv("REMOTE_LLM_HOST") or _cfg.get("remote_llm_host") or "").strip()
 REMOTE_LLM_USER = str(os.getenv("REMOTE_LLM_USER") or _cfg.get("remote_llm_user") or os.getenv("USER") or "root").strip()
+STOCK_SERVER_URL = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
 
 
 def ensure_llm_connected() -> bool:
@@ -99,7 +100,7 @@ def get_stock_analysis(symbol: str) -> str:
 
     # 3. Query the Docker microservice
     try:
-        response = requests.get(f"http://localhost:8000/analyze/{ticker}", timeout=60)
+        response = requests.get(f"{STOCK_SERVER_URL}/analyze/{ticker}", timeout=60)
         
         if response.status_code == 200:
             data = response.json()
