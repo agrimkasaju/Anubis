@@ -841,10 +841,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         if (shareBtn) shareBtn.classList.remove('hidden');
         document.getElementById('res-price').innerText = '$' + Number(data.price).toFixed(2);
         if (data.market_session && data.market_session !== 'Regular') {
-          const badgeText = data.market_session === 'Pre-Market' ? 'PRE' : 'AH';
+          const badgeText = data.market_session === 'Pre-Market' ? 'PRE' : (data.market_session === 'Overnight' ? 'ON' : (data.market_session === 'Closed' ? 'CLOSED' : 'AH'));
           const regText = data.regular_price ? ` (Reg: $${Number(data.regular_price).toFixed(2)})` : '';
+          const futText = (data.market_session === 'Overnight' && data.overnight_futures) ? ` • ${data.overnight_futures}` : '';
           if (sessionBadge) {
-            sessionBadge.innerText = `${badgeText}${regText}`;
+            sessionBadge.innerText = `${badgeText}${regText}${futText}`;
             sessionBadge.classList.remove('hidden');
           }
         } else {
@@ -1148,6 +1149,12 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
         sma_parts.append(f"200-SMA: ${sma_200:.2f}")
     sma_str = f"   |   {' | '.join(sma_parts)}" if sma_parts else ""
     pdf.cell(0, 8, f"   Price: ${price:.2f}{session_str}{reg_str}   |   2-Wk Range: ${low:.2f} - ${high:.2f}{sma_str}", new_x="LMARGIN", new_y="NEXT")
+    fut_str = data.get("overnight_futures", "")
+    if fut_str:
+        pdf.set_font("Helvetica", "I", 8.5)
+        pdf.set_text_color(71, 85, 105)
+        pdf.cell(0, 5, f"   Overnight Broad-Market Futures: {fut_str}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
     pdf.ln(3)
 
     # Candlestick Chart
@@ -1420,6 +1427,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "chart_url": f"/api/stock/chart?ticker={t}",
                         "market_session": item.get("market_session", "Regular"),
                         "regular_price": item.get("regular_price"),
+                        "overnight_futures": item.get("overnight_futures") or "",
                         "sma_50": item.get("sma_50"),
                         "sma_200": item.get("sma_200"),
                         "thinking_process": item.get("thinking_process") or ""
@@ -1472,6 +1480,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "chart_url": f"/api/stock/chart?ticker={symbol}",
                     "market_session": data.get("market_session", "Regular"),
                     "regular_price": data.get("regular_price"),
+                    "overnight_futures": data.get("overnight_futures") or "",
                     "sma_50": data.get("sma_50"),
                     "sma_200": data.get("sma_200"),
                     "thinking_process": data.get("thinking_process") or ""
