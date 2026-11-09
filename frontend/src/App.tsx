@@ -37,6 +37,10 @@ export const App: React.FC = () => {
       remoteLlmHost: remoteLlmMeta,
       isAuthed: Boolean(initialToken),
     });
+
+    if (!initialToken) {
+      setAuthModalOpen(true);
+    }
   }, []);
 
   const refreshFeeds = useCallback(async () => {

@@ -1,8 +1,10 @@
-const TOKEN_STORAGE_KEY = 'orion_auth_token';
+const PRIMARY_KEY = 'orion_token';
+const BACKUP_KEY = 'orion_auth_token';
 
 /**
- * Initializes and retrieves auth token from URL query params or sessionStorage.
- * Immediately scrubs the token from the browser address bar to prevent shoulder-surfing and leakages.
+ * Initializes and retrieves auth token from URL query params, sessionStorage, or localStorage.
+ * Maintains full backwards compatibility with legacy desktop browsers that saved 'orion_token' in localStorage.
+ * Immediately scrubs ?token= from the address bar to prevent shoulder-surfing and log leakages.
  */
 export function initAuthToken(): string {
   if (typeof window === 'undefined') return '';
@@ -11,7 +13,9 @@ export function initAuthToken(): string {
   const urlToken = params.get('token');
 
   if (urlToken) {
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, urlToken);
+    sessionStorage.setItem(PRIMARY_KEY, urlToken);
+    localStorage.setItem(PRIMARY_KEY, urlToken);
+
     // Scrub ?token= from address bar
     params.delete('token');
     const newQuery = params.toString() ? `?${params.toString()}` : '';
@@ -20,20 +24,30 @@ export function initAuthToken(): string {
     return urlToken;
   }
 
-  return sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  return getStoredToken();
 }
 
 export function getStoredToken(): string {
   if (typeof window === 'undefined') return '';
-  return sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  return (
+    sessionStorage.getItem(PRIMARY_KEY) ||
+    localStorage.getItem(PRIMARY_KEY) ||
+    sessionStorage.getItem(BACKUP_KEY) ||
+    localStorage.getItem(BACKUP_KEY) ||
+    ''
+  );
 }
 
 export function setStoredToken(token: string): void {
   if (typeof window === 'undefined') return;
   if (token) {
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    sessionStorage.setItem(PRIMARY_KEY, token);
+    localStorage.setItem(PRIMARY_KEY, token);
   } else {
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(PRIMARY_KEY);
+    sessionStorage.removeItem(BACKUP_KEY);
+    localStorage.removeItem(PRIMARY_KEY);
+    localStorage.removeItem(BACKUP_KEY);
   }
 }
 
