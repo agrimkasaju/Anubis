@@ -26,10 +26,14 @@ _APP_ALIASES = {
     "tiktok":             {"Windows": "TikTok",                 "Darwin": "TikTok",              "Linux": "tiktok"},
     "notepad":            {"Windows": "notepad.exe",            "Darwin": "TextEdit",            "Linux": "gedit"},
     "calculator":         {"Windows": "calc.exe",               "Darwin": "Calculator",          "Linux": "gnome-calculator"},
-    "terminal":           {"Windows": "cmd.exe",                "Darwin": "Terminal",            "Linux": "gnome-terminal"},
+    "terminal":           {"Windows": "cmd.exe",                "Darwin": "Terminal",            "Linux": "cosmic-term"},
+    "cosmic terminal":    {"Windows": "cmd.exe",                "Darwin": "Terminal",            "Linux": "cosmic-term"},
+    "cosmic-terminal":   {"Windows": "cmd.exe",                "Darwin": "Terminal",            "Linux": "cosmic-term"},
     "cmd":                {"Windows": "cmd.exe",                "Darwin": "Terminal",            "Linux": "bash"},
-    "explorer":           {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "nautilus"},
-    "file explorer":      {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "nautilus"},
+    "explorer":           {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "cosmic-files"},
+    "file explorer":      {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "cosmic-files"},
+    "files":              {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "cosmic-files"},
+    "cosmic files":       {"Windows": "explorer.exe",           "Darwin": "Finder",              "Linux": "cosmic-files"},
     "paint":              {"Windows": "mspaint.exe",            "Darwin": "Preview",             "Linux": "gimp"},
     "word":               {"Windows": "winword",                "Darwin": "Microsoft Word",      "Linux": "libreoffice --writer"},
     "excel":              {"Windows": "excel",                  "Darwin": "Microsoft Excel",     "Linux": "libreoffice --calc"},
@@ -39,7 +43,10 @@ _APP_ALIASES = {
     "slack":              {"Windows": "Slack",                  "Darwin": "Slack",               "Linux": "slack"},
     "steam":              {"Windows": "steam",                  "Darwin": "Steam",               "Linux": "steam"},
     "task manager":       {"Windows": "taskmgr.exe",            "Darwin": "Activity Monitor",    "Linux": "gnome-system-monitor"},
-    "settings":           {"Windows": "ms-settings:",           "Darwin": "System Preferences",  "Linux": "gnome-control-center"},
+    "settings":           {"Windows": "ms-settings:",           "Darwin": "System Preferences",  "Linux": "cosmic-settings"},
+    "cosmic settings":    {"Windows": "ms-settings:",           "Darwin": "System Preferences",  "Linux": "cosmic-settings"},
+    "cosmic store":       {"Windows": "ms-windows-store:",      "Darwin": "App Store",           "Linux": "cosmic-store"},
+    "cosmic edit":        {"Windows": "notepad.exe",            "Darwin": "TextEdit",            "Linux": "cosmic-edit"},
     "powershell":         {"Windows": "powershell.exe",         "Darwin": "Terminal",            "Linux": "bash"},
     "edge":               {"Windows": "msedge",                 "Darwin": "Microsoft Edge",      "Linux": "microsoft-edge"},
     "brave":              {"Windows": "brave",                  "Darwin": "Brave Browser",       "Linux": "brave-browser"},
@@ -126,33 +133,118 @@ def _launch_macos(app_name: str) -> bool:
         return False
 
 
-
 def _launch_linux(app_name: str) -> bool:
-    binary = (
-        shutil.which(app_name) or
-        shutil.which(app_name.lower()) or
-        shutil.which(app_name.lower().replace(" ", "-"))
-    )
-    if binary:
-        try:
-            subprocess.Popen([binary], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1.0)
-            return True
-        except Exception:
-            pass
+    """Unified Linux application launcher supporting COSMIC, GNOME, Flatpak, and binaries."""
+    import glob
+    import os
+    raw_query = app_name.strip()
+    query_clean = raw_query.lower()
 
-    try:
-        subprocess.run(["xdg-open", app_name], capture_output=True, timeout=5)
-        return True
-    except Exception:
-        pass
+    # 1. Canonical Desktop Fallbacks
+    CANONICAL_FALLBACKS = {
+        "terminal": ["cosmic-term", "gnome-terminal", "alacritty", "kitty", "konsole", "xterm"],
+        "settings": ["cosmic-settings", "gnome-control-center", "systemsettings"],
+        "files": ["cosmic-files", "nautilus", "dolphin", "thunar"],
+        "file explorer": ["cosmic-files", "nautilus", "dolphin"],
+        "explorer": ["cosmic-files", "nautilus", "dolphin"],
+        "editor": ["cosmic-edit", "gedit", "kate", "code"],
+        "notepad": ["cosmic-edit", "gedit", "kate"],
+        "store": ["cosmic-store", "gnome-software"],
+        "app store": ["cosmic-store", "gnome-software"],
+    }
+    if query_clean in CANONICAL_FALLBACKS:
+        for candidate in CANONICAL_FALLBACKS[query_clean]:
+            bin_path = shutil.which(candidate)
+            if bin_path:
+                try:
+                    subprocess.Popen([bin_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                    time.sleep(0.5)
+                    return True
+                except Exception:
+                    pass
 
-    try:
-        desktop_name = app_name.lower().replace(" ", "-")
-        subprocess.run(["gtk-launch", desktop_name], capture_output=True, timeout=5)
-        return True
-    except Exception:
-        pass
+    # 2. Direct binary lookup in PATH
+    candidates = [
+        raw_query,
+        query_clean,
+        query_clean.replace(" ", "-"),
+        query_clean.replace(" ", "_"),
+        query_clean.replace("cosmic-terminal", "cosmic-term"),
+        query_clean.replace("cosmic terminal", "cosmic-term"),
+    ]
+    for c in candidates:
+        bin_path = shutil.which(c)
+        if bin_path:
+            try:
+                subprocess.Popen([bin_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                time.sleep(0.5)
+                return True
+            except Exception:
+                pass
+
+    # 3. Dynamic .desktop file search & launch
+    desktop_dirs = [
+        "/usr/share/applications",
+        os.path.expanduser("~/.local/share/applications"),
+        "/var/lib/flatpak/exports/share/applications",
+        os.path.expanduser("~/.local/share/flatpak/exports/share/applications")
+    ]
+    matched_desktop_id = None
+    matched_desktop_file = None
+
+    for d in desktop_dirs:
+        if not os.path.isdir(d):
+            continue
+        for f in glob.glob(os.path.join(d, "*.desktop")):
+            desktop_id = os.path.basename(f)[:-8]  # strip .desktop
+            try:
+                content = open(f, errors="ignore").read()
+                app_title = ""
+                for line in content.splitlines():
+                    if line.startswith("Name=") and not app_title:
+                        app_title = line.split("=", 1)[1].strip()
+                        break
+                if app_title.lower() == query_clean:
+                    matched_desktop_id = desktop_id
+                    matched_desktop_file = f
+                    break
+                if query_clean in app_title.lower() or query_clean in desktop_id.lower():
+                    matched_desktop_id = desktop_id
+                    matched_desktop_file = f
+            except Exception:
+                continue
+        if matched_desktop_id:
+            break
+
+    # Launch matched desktop entry
+    if matched_desktop_id:
+        if shutil.which("gtk-launch"):
+            res = subprocess.run(["gtk-launch", matched_desktop_id], capture_output=True, timeout=5)
+            if res.returncode == 0:
+                time.sleep(0.5)
+                return True
+
+        if shutil.which("gio") and matched_desktop_file:
+            res = subprocess.run(["gio", "launch", matched_desktop_file], capture_output=True, timeout=5)
+            if res.returncode == 0:
+                time.sleep(0.5)
+                return True
+
+        # Extract Exec command from desktop file
+        if matched_desktop_file:
+            try:
+                content = open(matched_desktop_file, errors="ignore").read()
+                for line in content.splitlines():
+                    if line.startswith("Exec="):
+                        exec_cmd = line.split("=", 1)[1].strip()
+                        # Clean out desktop exec format codes (%u, %U, %f, %F)
+                        clean_cmd = [part for part in exec_cmd.split() if not part.startswith("%")]
+                        if clean_cmd and shutil.which(clean_cmd[0]):
+                            subprocess.Popen(clean_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                            time.sleep(0.5)
+                            return True
+            except Exception:
+                pass
 
     return False
 

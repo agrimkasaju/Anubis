@@ -113,18 +113,26 @@ def get_stock_analysis(symbol: str) -> str:
 
             local_summary = (data.get("news_summary") or "").strip()
             stance_line = ""
-            for line in local_summary.splitlines():
-                if "Directional Stance" in line or "UP" in line or "DOWN" in line:
-                    stance_line = line.strip()
+            lines = [l.strip() for l in local_summary.splitlines() if l.strip()]
+            for idx, line in enumerate(lines):
+                if "Directional Stance" in line:
+                    if (line.endswith(":") or line.endswith(":-")) and idx + 1 < len(lines):
+                        stance_line = f"{line} {lines[idx+1]}"
+                    else:
+                        stance_line = line
                     break
-            if not stance_line and local_summary:
-                stance_line = local_summary.splitlines()[-1].strip()
+                elif "UP (" in line or "DOWN (" in line or "NEUTRAL" in line:
+                    stance_line = line
+                    break
+            if not stance_line and lines:
+                stance_line = lines[-1]
 
+            news_source_label = data.get("news_source", "LOCAL MODEL").upper()
             return (
                 f"=== Stock Analysis for {data['ticker']} ===\n"
                 f"Current Price: ${data['current_price']:.2f} (2-Week Range: ${data['two_week_low']:.2f} - ${data['two_week_high']:.2f})\n"
                 f"FINAL OPERATIONAL VERDICT: {final_stance}\n"
-                f"LOCAL MODEL NEWS CALL: {stance_line or 'Neutral / No news'}\n"
+                f"{news_source_label} NEWS CALL: {stance_line or 'Neutral / No news'}\n"
                 f"NOTICE FOR ORION: Your final spoken recommendation MUST be '{final_stance}'. Do NOT recommend buying if the final stance is BEARISH or WAIT.\n"
                 f"-----------------------------------\n"
                 f"{analysis_text}"

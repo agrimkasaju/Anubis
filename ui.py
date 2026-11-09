@@ -1077,7 +1077,10 @@ class MainWindow(QMainWindow):
         if listener:
             listener.pause_listening()
 
-        self.setDisabled(True)
+        orion = getattr(self, 'orion', None)
+        if orion and hasattr(orion, 'stop_speaking'):
+            orion.stop_speaking()
+
         self.hide()
         QApplication.sendPostedEvents()
 
@@ -1086,9 +1089,8 @@ class MainWindow(QMainWindow):
             if listener:
                 listener.resume_listening()
                 print("🐺 [ANUBIS]: Wake-word predictions resumed cleanly.")
-            self.setDisabled(False)
 
-        QTimer.singleShot(300, _deferred_resume)
+        QTimer.singleShot(250, _deferred_resume)
         print("🐺 [ANUBIS]: Window hidden to background.")
 
     def changeEvent(self, event):
@@ -1097,15 +1099,13 @@ class MainWindow(QMainWindow):
             listener = getattr(self, 'listener', None)
             
             if self.isMinimized():
-                print("🐺 [ANUBIS]: Window minimized, wake listener remaining active/paused.")
-            else:
-                print("🐺 [ANUBIS]: Window restored.")
+                print("🐺 [ANUBIS]: Window minimized, wake listener active.")
                 if listener:
-                    if not getattr(listener, 'running', False):
-                        print("🐺 [ANUBIS]: Starting wake-word listener...")
-                        listener.start()
-                    else:
-                        listener.resume_listening()
+                    listener.resume_listening()
+            elif self.isVisible():
+                print("🐺 [ANUBIS]: Window restored/visible.")
+                if listener:
+                    listener.pause_listening()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

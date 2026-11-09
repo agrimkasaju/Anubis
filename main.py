@@ -55,11 +55,13 @@ def _ensure_display_environment():
 
 _ensure_display_environment()
 
+import numpy as np
+from scipy import signal as dsp
 import sounddevice as sd
 from google import genai
 from google.genai import types
 from ui import JarvisUI
-from config import get_gemini_live_model
+from config import get_gemini_live_model, get_orion_voice
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -185,9 +187,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "open_app",
         "description": (
-            "Opens any application on the Windows computer. "
+            "Opens any application on the computer (Linux / Pop!_OS / COSMIC). "
             "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
+            "terminal, settings, browser, files, code, or program. Always call this tool — never just say you opened it."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -240,15 +242,34 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "reminder",
-        "description": "Sets a timed reminder using Windows Task Scheduler.",
+        "description": (
+            "Manages reminders, Google Calendar events, and Google Tasks. "
+            "Use to schedule single or daily/range recurring reminders, add/list/delete calendar events, "
+            "or add/list/complete/delete to-do tasks. Can cancel or remove reminders using delete_reminder."
+        ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
+                "action": {
+                    "type": "STRING",
+                    "description": (
+                        "set_reminder | delete_reminder | add_event | delete_event | "
+                        "list_events | add_task | list_tasks | complete_task | delete_task (default: set_reminder)"
+                    )
+                },
+                "title":       {"type": "STRING", "description": "Event title or task description"},
+                "message":     {"type": "STRING", "description": "Reminder text or event message (synonym for title)"},
+                "query":       {"type": "STRING", "description": "Search keyword when deleting/canceling reminders, events, or tasks"},
+                "date":        {"type": "STRING", "description": "Date YYYY-MM-DD, 'today', 'tomorrow', 'next Saturday', or range 'from today to next Saturday'"},
+                "start_date":  {"type": "STRING", "description": "Start date for recurring or date-range reminders"},
+                "end_date":    {"type": "STRING", "description": "End date for recurring or date-range reminders (e.g. 'next Saturday')"},
+                "time":        {"type": "STRING", "description": "Start time in HH:MM format (24h) or '10:00 AM'"},
+                "end_time":    {"type": "STRING", "description": "End time in HH:MM format for calendar events (optional)"},
+                "days":        {"type": "INTEGER", "description": "Number of days ahead to query events (default: 1)"},
+                "due_date":    {"type": "STRING", "description": "Due date for tasks (YYYY-MM-DD)"},
+                "description": {"type": "STRING", "description": "Optional details or notes for events/tasks"}
             },
-            "required": ["date", "time", "message"]
+            "required": []
         }
     },
     {
@@ -300,7 +321,8 @@ TOOL_DECLARATIONS = [
             "properties": {
                 "action":      {"type": "STRING", "description": "The action to perform"},
                 "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
+                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."},
+                "confirmed":   {"type": "BOOLEAN", "description": "Set to true ONLY when the human user has verbally confirmed a pending dangerous action (shutdown/restart) in a subsequent turn."}
             },
             "required": []
         }
@@ -330,8 +352,10 @@ TOOL_DECLARATIONS = [
     {
         "name": "confirm_job_application",
         "description": (
-            "Confirms or rejects submitting the pending job application when the user "
-            "answers yes, send it, no, or skip."
+            "Confirms or rejects a pending job across both pipeline stages: "
+            "1) Screening stage: confirms whether to scrape and process the job (action='approve' to scrape and tailor, 'skip' to ignore). "
+            "2) Review stage: confirms whether to open the compiled application and job portal on desktop (action='approve' to open/submit, 'skip' to decline). "
+            "Call when user responds yes, process, approve, open it, no, or skip."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -347,9 +371,9 @@ TOOL_DECLARATIONS = [
     {
         "name": "ai_job_search",
         "description": (
-            "Opens the AI Job Search browser UI dashboard directly for the user. "
-            "Call this immediately whenever the user wants to open the job search framework, search for jobs, find tech jobs, or apply for jobs. "
-            "Never ask the user whether they want to scrape or input a URL—simply open the browser dashboard immediately so they can manage it in the UI."
+            "Opens the AI Job Search companion browser dashboard. "
+            "Call this ONLY when the user explicitly asks to open the job search dashboard, auto-tailor their resume/cover letter, or launch the application pipeline. "
+            "NEVER call this for searching, browsing the web, answering questions, or researching people, companies, or roles—use web_search for ALL searches."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -495,15 +519,37 @@ TOOL_DECLARATIONS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
+                "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
+                "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
+                "date":         {"type": "STRING",  "description": "Departure date (any format)"},
+                "return_date":  {"type": "STRING",  "description": "Return date for round trips"},
+                "passengers":   {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
+                "cabin":        {"type": "STRING",  "description": "economy | premium | business | first"},
+                "carry_on":     {"type": "INTEGER", "description": "Number of carry-on bags requested (e.g. 1)"},
+                "checked_bags": {"type": "INTEGER", "description": "Number of checked bags requested (e.g. 1)"},
+                "airline":      {"type": "STRING",  "description": "Specific airline name if user asked (e.g. Air Canada, WestJet)"},
+                "save":         {"type": "BOOLEAN", "description": "Save results to Notepad"},
             },
             "required": ["origin", "destination", "date"]
+        }
+    },
+    {
+        "name": "flight_tracker",
+        "description": "Sets up autonomous background flight price tracking tailored to evening laptop hours (5:00 PM and 8:30 PM with wake catch-up until 9:30 PM), alerting on price drops via desktop chime and Google Calendar deal notifications.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action":       {"type": "STRING",  "description": "track | list | cancel | sync_calendar"},
+                "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
+                "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
+                "date":         {"type": "STRING",  "description": "Departure date for the flight"},
+                "return_date":  {"type": "STRING",  "description": "Return date for round trips"},
+                "end_date":     {"type": "STRING",  "description": "When to stop polling (e.g. 'next Saturday', '2026-11-14')"},
+                "carry_on":     {"type": "INTEGER", "description": "Number of carry-on bags (default: 0)"},
+                "checked_bags": {"type": "INTEGER", "description": "Number of checked bags (default: 0)"},
+                "airline":      {"type": "STRING",  "description": "Optional airline filter (e.g. Air Canada, WestJet)"},
+            },
+            "required": ["action"]
         }
     },
     {
@@ -602,6 +648,7 @@ TOOL_DECLARATIONS = [
                     "type": "STRING",
                     "description": (
                         "identity — name, age, birthday, city, job, language, nationality | "
+                        "personality — tone of voice, slang preferences, speaking vibe, humor, companion traits | "
                         "preferences — favorite food/color/music/film/game/sport, hobbies | "
                         "projects — active projects, goals, things being built | "
                         "relationships — friends, family, partner, colleagues | "
@@ -687,6 +734,17 @@ class JarvisLive:
                 except Exception:
                     break
 
+    def stop_speaking(self):
+        """Immediately drains incoming audio and silences speech."""
+        if self.audio_in_queue:
+            while not self.audio_in_queue.empty():
+                try:
+                    self.audio_in_queue.get_nowait()
+                except Exception:
+                    break
+        self.set_speaking(False)
+        self.set_thinking(False)
+
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
@@ -694,40 +752,55 @@ class JarvisLive:
 
     async def _monitor_job_queue(self):
         """Monitors the IPC file, forces the UI to wake up, and prompts the user."""
-        last_announced_job = None
+        last_announced_event = None
         from job_bridge import bridge
         
         while True:
             await asyncio.sleep(1)
             pending = bridge.get_pending_job()
             
-            if pending and pending.get("job_key") != last_announced_job:
-                last_announced_job = pending.get("job_key")
-                company = pending.get("company", "a company")
-                title = pending.get("title", "a role")
+            if pending:
+                job_key = pending.get("job_key", "")
+                stage = pending.get("stage", "review")
+                event_id = f"{job_key}:{stage}"
                 
-                # --- AUTOMATIC WAKE-UP SEQUENCE ---
-                print(f"[ORION] 📢 Job received for {company}! Forcing UI wake-up...")
-                
-                # Trigger the UI to pop up from the background
-                if hasattr(self, 'ui'):
-                    if hasattr(self.ui, 'bring_to_front'):
-                        try:
-                            self.ui.bring_to_front()
-                        except Exception:
-                            pass
-                    elif hasattr(self.ui, 'show'):
-                        try:
-                            self.ui.show()
-                        except Exception:
-                            pass
-                # ----------------------------------
-                
-                prompt_msg = (
-                    f"[SYSTEM_NOTIFICATION] Sir, the job application for '{title}' at '{company}' "
-                    f"has been compiled and is ready on screen. Ask the user out loud if they want to submit or skip it."
-                )
-                self.speak(prompt_msg)
+                if event_id != last_announced_event:
+                    last_announced_event = event_id
+                    company = pending.get("company", "a company")
+                    title = pending.get("title", "a role")
+                    location = pending.get("location", "")
+                    loc_text = f" in {location}" if location else ""
+                    
+                    # --- AUTOMATIC WAKE-UP SEQUENCE ---
+                    print(f"[ORION] 📢 Job received for {company} (stage: {stage})! Forcing UI wake-up...")
+                    
+                    # Trigger the UI to pop up from the background
+                    if hasattr(self, 'ui'):
+                        if hasattr(self.ui, 'bring_to_front'):
+                            try:
+                                self.ui.bring_to_front()
+                            except Exception:
+                                pass
+                        elif hasattr(self.ui, 'show'):
+                            try:
+                                self.ui.show()
+                            except Exception:
+                                pass
+                    # ----------------------------------
+                    
+                    if stage == "screen":
+                        prompt_msg = (
+                            f"[SYSTEM_NOTIFICATION] New job discovered: '{title}' at '{company}'{loc_text}. "
+                            f"This role has not been scraped yet. Ask the user out loud: "
+                            f"'Sir, I found an open role for {title} at {company}{loc_text}. Is this good to process?'"
+                        )
+                    else:
+                        prompt_msg = (
+                            f"[SYSTEM_NOTIFICATION] Application documents compiled: The tailored resume and cover letter "
+                            f"for '{title}' at '{company}' are ready on screen. Ask the user out loud: "
+                            f"'Sir, your tailored application for {title} at {company} is ready for review. Shall I open it?'"
+                        )
+                    self.speak(prompt_msg)
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -749,17 +822,22 @@ class JarvisLive:
             parts.append(mem_str)
         parts.append(sys_prompt)
 
+        voice_name = get_orion_voice()
+        print(f"[ORION] 🎙️ Voice: {voice_name}")
+
         return types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             output_audio_transcription={},
-            input_audio_transcription={},
+            input_audio_transcription=types.AudioTranscriptionConfig(
+                language_codes=["en"]
+            ),
             system_instruction="\n".join(parts),
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
             session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Charon"
+                        voice_name=voice_name
                     )
                 )
             ),
@@ -807,32 +885,38 @@ class JarvisLive:
 
                 action = args.get("action", "").lower()
 
-                if action in ["approve", "yes", "send", "submit"]:
+                if action in ["approve", "yes", "send", "submit", "process"]:
                     job = bridge.get_pending_job()
                     if job:
-                        apply_url = job.get("apply_url", "").strip()
+                        stage = job.get("stage", "review")
+                        comp = job.get("company", "the company")
 
-                        if not apply_url or apply_url == "N/A":
-                            query = f"{job.get('company', '')} {job.get('title', '')} careers application"
-                            apply_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
+                        if stage == "screen":
+                            bridge.resolve_approval(True)
+                            result = f"Understood, sir. Starting to scrape and tailor your application for {comp}. I will notify you once the documents are compiled."
+                        else:
+                            apply_url = job.get("apply_url", "").strip()
 
-                        # 1. Open the job posting in your default web browser
-                        webbrowser.open(apply_url)
+                            if not apply_url or apply_url == "N/A":
+                                query = f"{job.get('company', '')} {job.get('title', '')} careers application"
+                                apply_url = f"https://duckduckgo.com/?q={query.replace(' ', '+')}"
 
-                        # 2. Open Pop!_OS file manager directly to the output folder containing your PDFs
-                        output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
-                        if os.path.exists(output_dir):
-                            subprocess.Popen(['xdg-open', output_dir])
+                            webbrowser.open(apply_url)
 
-                        # 3. Resolve the bridge so your pipeline logs it and proceeds
-                        bridge.resolve_approval(True)
-                        result = f"Confirmed. I have opened the application page for {job.get('company')} in your browser and opened your PDF output folder. You can complete the form using Simplify."
+                            output_dir = os.path.abspath("/home/grim/Downloads/ai_job_search/ai_job_search/output")
+                            if os.path.exists(output_dir):
+                                subprocess.Popen(['xdg-open', output_dir])
+
+                            bridge.resolve_approval(True)
+                            result = f"Confirmed. I have opened the application page and your tailored PDFs for {comp} on desktop."
                     else:
                         result = "No pending job application found to approve, sir."
 
                 else:
+                    job = bridge.get_pending_job()
+                    comp = job.get("company", "the position") if job else "the position"
                     bridge.resolve_approval(False)
-                    result = "Skipped application as requested, sir."
+                    result = f"Skipped {comp} as requested, sir."
 
             elif name == "file_controller":
                 r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
@@ -859,13 +943,11 @@ class JarvisLive:
                 result = r or "Done."
 
             elif name == "screen_process":
-                threading.Thread(
-                    target=screen_process,
-                    kwargs={"parameters": args, "response": None,
-                            "player": self.ui, "session_memory": None},
-                    daemon=True
-                ).start()
-                result = "Vision module activated. Stay completely silent — vision module will speak directly."
+                r = await loop.run_in_executor(
+                    None,
+                    lambda: screen_process(parameters=args, player=self.ui)
+                )
+                result = r or "Screen processed."
 
             elif name == "computer_settings":
                 r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
@@ -904,6 +986,29 @@ class JarvisLive:
 
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
+                result = r or "Done."
+
+            elif name == "flight_tracker":
+                from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker, sync_active_trackers_to_calendar
+                action = (args.get("action") or "track").lower().strip()
+                if action == "list":
+                    r = list_flight_trackers()
+                elif action == "cancel":
+                    r = cancel_flight_tracker(origin=args.get("origin", ""), destination=args.get("destination", ""))
+                elif action in ("sync_calendar", "sync_to_calendar", "calendar_sync"):
+                    r = sync_active_trackers_to_calendar()
+                else:
+                    res = await loop.run_in_executor(None, lambda: add_flight_tracker(
+                        origin=args.get("origin", ""),
+                        destination=args.get("destination", ""),
+                        date=args.get("date", ""),
+                        return_date=args.get("return_date"),
+                        end_date=args.get("end_date"),
+                        carry_on=max(0, int(args.get("carry_on", 0))),
+                        checked_bags=max(0, int(args.get("checked_bags", 0))),
+                        airline=args.get("airline"),
+                    ))
+                    r = res.get("message", "Flight tracker created.")
                 result = r or "Done."
             elif name == "get_stock_analysis":
                 # Keep the import here so it only loads if the tool is requested
@@ -957,13 +1062,17 @@ class JarvisLive:
             await self.session.send_realtime_input(
                 audio=types.Blob(
                     data=msg["data"],
-                    mime_type="audio/pcm"
+                    mime_type=msg.get("mime_type", f"audio/pcm;rate={SEND_SAMPLE_RATE}")
                 )
             )
 
     async def _listen_audio(self):
         print("[ORION] 🎤 Mic task ready.")
         loop = asyncio.get_event_loop()
+
+        # 50 Hz high-pass Butterworth filter to remove hardware DC offset (+5940) and low-frequency rumble
+        hp_b, hp_a = dsp.butter(2, 50, btype="highpass", fs=SEND_SAMPLE_RATE)
+        hp_zi = dsp.lfilter_zi(hp_b, hp_a) * 5940.0
 
         def _enqueue(item):
             try:
@@ -973,55 +1082,48 @@ class JarvisLive:
                 pass
 
         def callback(indata, frames, time_info, status):
+            nonlocal hp_zi
+            if status:
+                print(f"[ORION] ⚠️ Mic status: {status}", flush=True)
+
             with self._speaking_lock:
                 busy = self._is_speaking or self._is_thinking
 
             ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else True
 
             if not busy and not self.ui.muted and ui_visible and self.out_queue:
-                data = indata.tobytes()
+                chunk_f = indata[:, 0].astype(np.float32)
+                filtered, hp_zi = dsp.lfilter(hp_b, hp_a, chunk_f, zi=hp_zi)
+                # Boost weak signal (std dev ~200) by 2.5x so consonants and formants are clear
+                boosted = np.clip(filtered * 2.5, -32768, 32767).astype(np.int16)
+                data = boosted.tobytes()
                 loop.call_soon_threadsafe(
                     _enqueue,
                     {"data": data, "mime_type": f"audio/pcm;rate={SEND_SAMPLE_RATE}"}
                 )
 
-        while True:
-            ui_visible = self.ui._win.isVisible() if hasattr(self.ui, '_win') else False
-            
-            # Open mic stream ONLY when UI is visible
-            if ui_visible and self._mic_stream is None:
+        try:
+            self._mic_stream = sd.InputStream(
+                samplerate=SEND_SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=CHUNK_SIZE,
+                callback=callback,
+            )
+            self._mic_stream.start()
+            print("[ORION] 🎤 Mic stream ACTIVE.")
+            while True:
+                await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[ORION] ❌ Mic stream error: {e}")
+        finally:
+            if self._mic_stream:
                 try:
-                    self._mic_stream = sd.InputStream(
-                        samplerate=SEND_SAMPLE_RATE,
-                        channels=CHANNELS,
-                        dtype="int16",
-                        blocksize=CHUNK_SIZE,
-                        callback=callback,
-                    )
-                    self._mic_stream.start()
-                    print("[ORION] 🎤 Mic stream OPEN for conversation.")
-                except Exception as e:
-                    print(f"[ORION] ❌ Failed to open mic: {e}")
-            
-            # Close mic stream asynchronously when UI is hidden to free hardware
-            elif not ui_visible and self._mic_stream is not None:
-                try:
-                    stream_to_close = self._mic_stream
-                    self._mic_stream = None
-                    
-                    def _async_close(s):
-                        try:
-                            s.stop()
-                            s.close()
-                            print("[ORION] 🔒 Mic stream CLOSED asynchronously.")
-                        except Exception as e:
-                            print(f"[ORION] ⚠️ Error closing mic: {e}")
-
-                    threading.Thread(target=_async_close, args=(stream_to_close,), daemon=True).start()
-                except Exception as e:
-                    print(f"[ORION] ⚠️ Mic close error: {e}")
-
-            await asyncio.sleep(0.2)
+                    self._mic_stream.stop()
+                    self._mic_stream.close()
+                except Exception:
+                    pass
+                self._mic_stream = None
 
     async def _receive_audio(self):
         print("[ORION] 👂 Recv started")
@@ -1048,6 +1150,11 @@ class JarvisLive:
                                     break
                             self.set_speaking(False)
                             self.set_thinking(False)
+                            try:
+                                from actions.computer_settings import cancel_pending_dangerous_action
+                                cancel_pending_dangerous_action()
+                            except Exception:
+                                pass
 
                         if sc.output_transcription and sc.output_transcription.text:
                             self.set_thinking(False)
@@ -1159,7 +1266,7 @@ class JarvisLive:
                     self.session        = session
                     self._loop          = asyncio.get_event_loop()
                     self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=50)
+                    self.out_queue      = asyncio.Queue(maxsize=500)
 
                     print("[ORION] ✅ Connected.")
                     self.ui.set_state("LISTENING")
@@ -1170,6 +1277,8 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._monitor_job_queue())
+                    from services.flight_poller import get_poller_daemon
+                    tg.create_task(get_poller_daemon().start())
                     
             except Exception as e:
                 print(f"[ORION] ⚠️ {e}")
@@ -1187,7 +1296,7 @@ def main(minimized: bool = False):
     ui_instance = ui
 
     # --- START VOICE LISTENER ---
-    listener = WakeWordListener(callback=on_wake_word_detected, model_path="orion.onnx")
+    listener = WakeWordListener(callback=on_wake_word_detected, model_path=str(BASE_DIR / "orion.onnx"))
     ui.listener = listener
     listener.start()
     # ------------------------------
@@ -1200,6 +1309,8 @@ def main(minimized: bool = False):
             ui.wait_for_api_key()
 
         orion = JarvisLive(ui)
+        ui.orion = orion
+        ui._win.orion = orion
         try:
             asyncio.run(orion.run())
         except KeyboardInterrupt:

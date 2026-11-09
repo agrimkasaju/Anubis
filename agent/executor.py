@@ -248,6 +248,26 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         from actions.flight_finder import flight_finder
         return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
 
+    elif tool == "flight_tracker":
+        from actions.flight_tracker import add_flight_tracker, list_flight_trackers, cancel_flight_tracker
+        act = (parameters.get("action") or "track").lower().strip()
+        if act == "list":
+            return list_flight_trackers()
+        elif act == "cancel":
+            return cancel_flight_tracker(origin=parameters.get("origin", ""), destination=parameters.get("destination", ""))
+        else:
+            res = add_flight_tracker(
+                origin=parameters.get("origin", ""),
+                destination=parameters.get("destination", ""),
+                date=parameters.get("date", ""),
+                return_date=parameters.get("return_date"),
+                end_date=parameters.get("end_date"),
+                carry_on=max(0, int(parameters.get("carry_on", 0))),
+                checked_bags=max(0, int(parameters.get("checked_bags", 0))),
+                airline=parameters.get("airline"),
+            )
+            return res.get("message", "Flight tracker created.")
+
     elif tool == "get_stock_analysis":
         from actions.stock_actions import get_stock_analysis
         return get_stock_analysis(symbol=parameters.get("symbol", "")) or "Done."

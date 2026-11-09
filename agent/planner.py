@@ -79,9 +79,17 @@ send_message
   platform: string (required)
 
 reminder
-  date: string YYYY-MM-DD (required)
-  time: string HH:MM (required)
-  message: string (required)
+  action: "set_reminder" | "delete_reminder" | "add_event" | "delete_event" | "list_events" | "add_task" | "list_tasks" | "complete_task" | "delete_task" (default: "set_reminder")
+  title: string (optional) — Event or task title
+  message: string (optional) — Reminder text or event summary
+  query: string (optional) — Keyword for deleting/canceling reminders, events, or tasks
+  date: string YYYY-MM-DD or "today" / "tomorrow" or range "from today to next Saturday" (optional)
+  start_date: string (optional) — range start date
+  end_date: string (optional) — range end date (e.g. "next Saturday")
+  time: string HH:MM (24h) or "10:00 AM" (optional)
+  end_time: string HH:MM (optional) — for calendar events
+  days: integer (optional) — query range for list_events
+  due_date: string (optional) — due date for tasks
 
 desktop_control
   action: "wallpaper" | "organize" | "clean" | "list" | "task" (required)
@@ -99,6 +107,21 @@ flight_finder
   origin: string (required)
   destination: string (required)
   date: string (required)
+  return_date: string (optional)
+  carry_on: integer (optional)
+  checked_bags: integer (optional)
+  airline: string (optional)
+
+flight_tracker
+  action: "track" | "list" | "cancel" | "sync_calendar" (required)
+  origin: string (for track/cancel)
+  destination: string (for track/cancel)
+  date: string (for track)
+  return_date: string (optional)
+  end_date: string (optional, e.g. "next Saturday")
+  carry_on: integer (optional)
+  checked_bags: integer (optional)
+  airline: string (optional)
 
 get_stock_analysis
   symbol: string (required) — The stock ticker symbol (e.g., AAPL, NOK)
@@ -142,7 +165,28 @@ send_message | receiver: John, message_text: "There is a meeting tomorrow", plat
 Goal: "Open the clock and set a reminder for 30 minutes later"
 Steps:
 
-reminder | date: [today], time: [now+30min], message: "Reminder"
+reminder | action: "set_reminder", date: [today], time: [now+30min], message: "Reminder"
+
+Goal: "What are my upcoming events for the next 3 days"
+Steps:
+
+reminder | action: "list_events", days: 3
+
+Goal: "Add buy groceries to my to-do tasks and check my pending tasks"
+Steps:
+
+reminder | action: "add_task", title: "Buy groceries"
+reminder | action: "list_tasks"
+
+Goal: "Set a reminder from today to next Saturday to check flight finder for Calgary trip"
+Steps:
+
+reminder | action: "set_reminder", message: "Check flight finder for Calgary trip", start_date: [today], end_date: "next Saturday", time: "10:00"
+
+Goal: "Remove those reminders for the Calgary trip"
+Steps:
+
+reminder | action: "delete_reminder", query: "Calgary"
 
 OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 {

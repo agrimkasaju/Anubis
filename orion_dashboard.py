@@ -243,7 +243,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Mode Toggle -->
         <div class="grid grid-cols-2 p-1 bg-zinc-950 border border-zinc-800 rounded-xl text-xs font-medium">
           <button id="tab-scrape" onclick="switchJobMode('scrape')" class="py-2 rounded-lg bg-zinc-800 text-white font-semibold transition">
-            🌐 Auto-Scrape (GitHub)
+            🌐 Auto-Scrape (Simplify)
           </button>
           <button id="tab-manual" onclick="switchJobMode('manual')" class="py-2 rounded-lg text-zinc-400 hover:text-zinc-200 transition">
             🔗 Manual URL
@@ -253,8 +253,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Mode: Auto-Scrape -->
         <div id="pane-scrape" class="space-y-3">
           <p class="text-xs text-zinc-400 leading-relaxed">
-            Scrapes fresh unapplied software postings from GitHub, drafts tailored CV & Cover Letters in the background, and queues them above for review.
+            Scrapes fresh unapplied postings from Simplify (30-min feed), drafts tailored CV & Cover Letters in the background, and queues them above for review.
           </p>
+
+          <div class="space-y-1">
+            <label class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Target Season</label>
+            <select id="select-job-seasons" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-cyan-500">
+              <option value="all">All Seasons (Fall, Winter, Summer)</option>
+              <option value="summer">Summer Only</option>
+              <option value="winter">Winter Only</option>
+              <option value="fall">Fall Only</option>
+              <option value="fall,winter">Fall & Winter (Off-Cycle)</option>
+            </select>
+          </div>
+
           <button onclick="startPipeline('scrape')" class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-semibold rounded-xl text-sm transition shadow-lg shadow-cyan-950/30">
             Launch Auto-Scrape Session
           </button>
@@ -471,6 +483,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         payload.url = url;
         payload.company = document.getElementById('input-job-comp').value.trim();
         payload.title = document.getElementById('input-job-title').value.trim();
+      } else if (mode === 'scrape') {
+        const seasonEl = document.getElementById('select-job-seasons');
+        if (seasonEl) {
+          payload.seasons = seasonEl.value;
+        }
       }
 
       try {
@@ -1577,6 +1594,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             url = body.get("url", "").strip()
             company = body.get("company", "").strip()
             title = body.get("title", "").strip()
+            seasons = body.get("seasons", "all").strip()
 
             python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
             script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
@@ -1588,6 +1606,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     cmd.extend(["--company", company])
                 if title:
                     cmd.extend(["--title", title])
+            elif mode == "scrape" and seasons and seasons != "all":
+                cmd.extend(["--seasons", seasons])
 
             env = os.environ.copy()
             # Use ai_job_search's dedicated keys, NOT Anubis keys!

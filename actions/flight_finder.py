@@ -1,12 +1,16 @@
 #flight_finder.py
+import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from config import is_windows, is_mac, is_linux
+from actions.browser_control import _bt, _ensure_started, browser_control
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -18,7 +22,6 @@ BASE_DIR        = _get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 _MONTH_MAP: dict[str, int] = {
-
     "january": 1, "february": 2, "march": 3,     "april": 4,
     "may": 5,     "june": 6,     "july": 7,       "august": 8,
     "september": 9, "october": 10, "november": 11, "december": 12,
@@ -34,13 +37,13 @@ _RELATIVE_MAP_KEYS = {
 
 
 def _parse_date(raw: str) -> str:
-
     raw   = raw.strip()
     lower = raw.lower()
     today = datetime.now()
 
-    if re.match(r"\d{4}-\d{2}-\d{2}", raw):
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
         return raw
+
     for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%d-%m-%Y"):
         try:
             return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
@@ -55,20 +58,16 @@ def _parse_date(raw: str) -> str:
     for key, val in relative.items():
         if key in lower:
             return val.strftime("%Y-%m-%d")
-# replace the try/except genai block with:
+
+    # Clean conversational modifiers like "around", "close to", "about", "for", "on"
+    cleaned = re.sub(r"(?i)\b(around|close to|about|on|for|from|to|near)\b", "", raw).strip()
     try:
-        from or_client import client
-        result = client.chat(
-            f"Today is {today.strftime('%Y-%m-%d')}. "
-            f"Convert this date expression to YYYY-MM-DD: '{raw}'. "
-            f"Return ONLY the date string, nothing else.",
-            system="You are a date converter. Return only the YYYY-MM-DD string."
-        )
-        result = result.strip()
-        if re.match(r"\d{4}-\d{2}-\d{2}", result):
-            return result
-    except Exception as e:
-        print(f"[FlightFinder] ⚠️ date parse failed: {e}")
+        from dateutil import parser as dt_parser
+        dt = dt_parser.parse(cleaned, fuzzy=True, default=today)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+
     for month_name, month_num in _MONTH_MAP.items():
         if month_name in lower:
             day_match = re.search(r"\d{1,2}", raw)
@@ -77,9 +76,9 @@ def _parse_date(raw: str) -> str:
                 year = today.year if month_num >= today.month else today.year + 1
                 return f"{year}-{month_num:02d}-{day:02d}"
 
-    # Last resort: today
     print(f"[FlightFinder] ⚠️ Could not parse date '{raw}' — using today.")
     return today.strftime("%Y-%m-%d")
+
 
 _CABIN_CODE: dict[str, str] = {
     "economy":  "1",
@@ -87,6 +86,7 @@ _CABIN_CODE: dict[str, str] = {
     "business": "3",
     "first":    "4",
 }
+
 
 def _build_google_flights_url(
     origin:      str,
@@ -96,10 +96,7 @@ def _build_google_flights_url(
     passengers:  int        = 1,
     cabin:       str        = "economy",
 ) -> str:
-    from urllib.parse import quote_plus
-
     cabin_code = _CABIN_CODE.get(cabin.lower(), "1")
-
     origin_enc      = quote_plus(origin)
     destination_enc = quote_plus(destination)
 
@@ -108,35 +105,397 @@ def _build_google_flights_url(
     else:
         trip = f"Flights+from+{origin_enc}+to+{destination_enc}+on+{date}"
 
-    return (
-        f"https://www.google.com/travel/flights"
-        f"?q={trip}"
-        f"&curr=USD"
-        f"&cabin={cabin_code}"
-        f"&adults={passengers}"
+    url = f"https://www.google.com/travel/flights?q={trip}&curr=USD"
+    if passengers > 1:
+        url += f"&adults={passengers}"
+    if cabin.lower() != "economy":
+        cabin_code = _CABIN_CODE.get(cabin.lower(), "1")
+        url += f"&cabin={cabin_code}"
+    return url
+
+
+def _parse_flight_card(aria: str, raw_text: str) -> dict:
+    flight = {
+        "airline": "",
+        "departure": "",
+        "arrival": "",
+        "duration": "",
+        "stops": 0,
+        "price": "",
+        "currency": "USD",
+        "is_round_trip": False,
+        "separate_tickets": False,
+        "layover": "",
+        "arrival_date": "",
+        "carry_on": None,
+        "checked_bags": None,
+    }
+
+    combined = (aria + " " + raw_text).lower()
+    if "separate tickets" in combined:
+        flight["separate_tickets"] = True
+    if "round trip" in combined:
+        flight["is_round_trip"] = True
+
+    if aria:
+        # Price extraction: e.g. "From 656 US dollars" or "From 656 Canadian dollars"
+        pm = re.search(r"From\s+(\d[\d,]*)\s+([A-Za-z]+)\s+dollars", aria, re.IGNORECASE)
+        if pm:
+            flight["price"] = f"${pm.group(1)}"
+            curr = pm.group(2).upper()
+            flight["currency"] = "CAD" if "CANADIAN" in curr else "USD"
+        else:
+            pm2 = re.search(r"[$€£](\d[\d,]*)", aria)
+            if pm2:
+                flight["price"] = f"${pm2.group(1)}"
+
+        # Stops & Airline: e.g. "Nonstop flight with WestJet." or "2 stops flight with Air Canada."
+        am = re.search(r"(Nonstop|\d+\s+stops?)\s+flight with\s+([^.]+?)(?:\.|$)", aria, re.IGNORECASE)
+        if am:
+            stops_str = am.group(1)
+            flight["stops"] = 0 if "nonstop" in stops_str.lower() else int(re.search(r"\d+", stops_str).group())
+            flight["airline"] = am.group(2).strip()
+
+        # Departure & Arrival times
+        dm = re.search(r"Leaves\s+.*?\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))", aria)
+        if dm:
+            flight["departure"] = dm.group(1).strip()
+        arm = re.search(r"arrives\s+.*?\s+at\s+(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))(?:\s+on\s+([A-Za-z]+,\s+[A-Za-z]+\s+\d+))?", aria)
+        if arm:
+            flight["arrival"] = arm.group(1).strip()
+            if arm.group(2):
+                flight["arrival_date"] = arm.group(2).strip()
+
+        # Total duration
+        durm = re.search(r"Total duration\s+([^.]+?)(?:\.|$)", aria)
+        if durm:
+            flight["duration"] = durm.group(1).strip()
+
+        # Layovers
+        laym = re.findall(r"(\d+\s*hr(?:\s*\d+\s*min)?\s*layover\s+at\s+[^.]+)", aria, re.IGNORECASE)
+        if laym:
+            flight["layover"] = "; ".join(laym)
+
+        # Baggage allowance extraction from aria-label
+        carry = re.search(r"(\d+)\s+carry-on\s+bag", aria, re.IGNORECASE)
+        checked = re.search(r"(\d+)\s+checked\s+bag", aria, re.IGNORECASE)
+        if carry:
+            flight["carry_on"] = int(carry.group(1))
+        if checked:
+            flight["checked_bags"] = int(checked.group(1))
+
+    # Fallback to raw text parsing for missing values
+    if not flight["departure"] or not flight["airline"]:
+        time_m = re.search(r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*[–\-—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)(?:\+\d+)?)", raw_text)
+        if time_m:
+            flight["departure"] = flight["departure"] or time_m.group(1).strip()
+            flight["arrival"] = flight["arrival"] or time_m.group(2).strip()
+
+        dur_m = re.search(r"(\d+\s*h[r]?\s*(?:\d+\s*m(?:in)?)?)", raw_text)
+        if dur_m:
+            flight["duration"] = flight["duration"] or dur_m.group(1).strip()
+
+        stops_m = re.search(r"(Nonstop|\d+\s*stop[s]?)", raw_text, re.IGNORECASE)
+        if stops_m:
+            flight["stops"] = 0 if "nonstop" in stops_m.group(1).lower() else int(re.search(r"\d+", stops_m.group(1)).group())
+
+        price_m = re.search(r"(\$\d[\d,]*)", raw_text)
+        if price_m:
+            flight["price"] = flight["price"] or price_m.group(1).strip()
+
+    return flight
+
+
+async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> None:
+    if carry_on <= 0 and checked_bags <= 0:
+        return
+
+    btn = None
+    for _ in range(10):
+        btn = await page.query_selector('button[aria-label*="Bags"]')
+        if btn and await btn.is_visible():
+            break
+        await asyncio.sleep(0.5)
+
+    if not btn:
+        print("[FlightFinder] ⚠️ Bags filter button not found.")
+        return
+
+    print(f"[FlightFinder] 🧳 Applying bag filters: {carry_on} carry-on, {checked_bags} checked bag(s)...")
+    await btn.click()
+    await asyncio.sleep(0.5)
+
+    if carry_on > 0:
+        add_carry = await page.query_selector('button[aria-label="Add carry-on bag"]')
+        for _ in range(carry_on):
+            if add_carry:
+                await add_carry.click()
+                await asyncio.sleep(0.3)
+
+    if checked_bags > 0:
+        add_checked = await page.query_selector('button[aria-label="Add checked bag"]')
+        for _ in range(checked_bags):
+            if add_checked:
+                await add_checked.click()
+                await asyncio.sleep(0.3)
+
+    # Apply bag filters by clicking Done on the dialog
+    done_clicked = False
+    for db in await page.query_selector_all('button:has-text("Done")'):
+        if await db.is_visible():
+            await db.click()
+            done_clicked = True
+            break
+    if not done_clicked:
+        await page.keyboard.press("Escape")
+    # Wait for Google Flights to re-sort results with bag fees included
+    await asyncio.sleep(1.5)
+
+
+async def _wait_for_flight_cards(page, timeout: int = 30, label: str = "flights") -> list:
+    """
+    Waits for Google Flights search cards (li.pIav2d) to render.
+    Handles 'Oops, something went wrong' error states by auto-clicking the 'Reload' button
+    and recovers via page reload if necessary.
+    """
+    reloads_clicked = 0
+    hard_reload_done = False
+
+    # Check for cookie/consent dialog if present
+    try:
+        consent = await page.query_selector('button:has-text("Reject all"), button:has-text("Accept all")')
+        if consent and await consent.is_visible():
+            await consent.click()
+            await asyncio.sleep(1.0)
+    except Exception:
+        pass
+
+    for i in range(int(timeout * 2)):
+        cards = await page.query_selector_all("li.pIav2d")
+        if cards:
+            return cards
+
+        # Detect 'Oops, something went wrong' banner / Reload button
+        reload_btn = await page.query_selector(
+            'button:has-text("Reload"), div[role="button"]:has-text("Reload"), [aria-label*="Reload"]'
+        )
+        if reload_btn and await reload_btn.is_visible():
+            reloads_clicked += 1
+            print(f"[FlightFinder] 🔄 Detected 'Oops, something went wrong' banner during {label}. Auto-clicking Reload (attempt {reloads_clicked})...")
+            try:
+                await reload_btn.click()
+                await asyncio.sleep(2.0)
+                continue
+            except Exception as e:
+                print(f"[FlightFinder] ⚠️ Error clicking reload: {e}")
+
+        # If stuck in error state or reload was clicked twice with no effect, try hard page reload
+        if reloads_clicked >= 2 and not hard_reload_done:
+            print(f"[FlightFinder] 🔄 Multiple reload clicks did not recover {label}. Performing page reload...")
+            try:
+                hard_reload_done = True
+                await page.reload(wait_until="domcontentloaded")
+                await asyncio.sleep(2.0)
+                continue
+            except Exception as re:
+                print(f"[FlightFinder] ⚠️ Page reload failed: {re}")
+
+        # Check for genuine "No flights found" after giving at least 5 seconds
+        if i >= 10:
+            try:
+                txt = await page.inner_text("body")
+                lower_txt = txt.lower()
+                if ("no flights found" in lower_txt or "no matching flights" in lower_txt) and "oops" not in lower_txt:
+                    print(f"[FlightFinder] ℹ️ Google Flights returned no matching flights for {label}.")
+                    return []
+            except Exception:
+                pass
+
+        await asyncio.sleep(0.5)
+
+    print(f"[FlightFinder] ⚠️ Timed out waiting for {label} after {timeout} seconds.")
+    return []
+
+
+async def _scrape_flights_async(
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None,
+    passengers:   int,
+    cabin:        str,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
+) -> tuple[list[dict], list[dict], str, str]:
+    _ensure_started()
+    page = await _bt._get_page()
+
+    url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+    print(f"[FlightFinder] 🌐 Navigating to: {url}")
+    await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+
+    # Wait for flight cards to render (with auto-reload recovery)
+    cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (initial)")
+
+    # Apply bag filters if requested by user
+    if carry_on > 0 or checked_bags > 0:
+        await _apply_bag_filters(page, carry_on, checked_bags)
+        # Re-wait for flight cards to update with bag fees applied
+        cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (with bags)")
+
+    outbound: list[dict] = []
+    for c in cards[:5]:
+        link = await c.query_selector("div.JMc5Xc")
+        aria = await link.get_attribute("aria-label") if link else ""
+        txt  = await c.inner_text()
+        parsed = _parse_flight_card(aria, txt)
+        if parsed.get("airline") or parsed.get("price"):
+            outbound.append(parsed)
+
+    returning: list[dict] = []
+    # For round trips, inspect return leg details by clicking the top departing flight
+    if return_date and cards:
+        first_link = await cards[0].query_selector("div.JMc5Xc")
+        if first_link:
+            await page.evaluate("(el) => el.click()", first_link)
+            # Wait for returning flights page to load (with auto-reload recovery)
+            ret_cards = await _wait_for_flight_cards(page, timeout=30, label="return flights")
+            for c in ret_cards[:5]:
+                link = await c.query_selector("div.JMc5Xc")
+                aria = await link.get_attribute("aria-label") if link else ""
+                txt  = await c.inner_text()
+                parsed = _parse_flight_card(aria, txt)
+                if parsed.get("airline") or parsed.get("price"):
+                    returning.append(parsed)
+
+    raw_text = await page.inner_text("body")
+    return outbound, returning, page.url, raw_text
+
+
+async def scrape_flights_headless_async(
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    passengers:   int        = 1,
+    cabin:        str        = "economy",
+    carry_on:     int        = 0,
+    checked_bags: int        = 0,
+    airline:      str | None = None,
+) -> tuple[list[dict], list[dict], str]:
+    from playwright.async_api import async_playwright
+
+    default_browsers_dir = BASE_DIR / ".playwright-browsers"
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and default_browsers_dir.exists():
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(default_browsers_dir)
+
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-setuid-sandbox"]
+    )
+    context = await browser.new_context(
+        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        viewport={"width": 1280, "height": 800}
+    )
+    page = await context.new_page()
+
+    url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+
+        # Wait for flight cards (with auto-reload recovery)
+        cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (initial)")
+
+        if carry_on > 0 or checked_bags > 0:
+            await _apply_bag_filters(page, carry_on, checked_bags)
+            cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (with bags)")
+
+        outbound: list[dict] = []
+        for c in cards[:5]:
+            link = await c.query_selector("div.JMc5Xc")
+            aria = await link.get_attribute("aria-label") if link else ""
+            txt  = await c.inner_text()
+            parsed = _parse_flight_card(aria, txt)
+            if parsed.get("airline") or parsed.get("price"):
+                outbound.append(parsed)
+
+        returning: list[dict] = []
+        if return_date and cards:
+            first_link = await cards[0].query_selector("div.JMc5Xc")
+            if first_link:
+                await page.evaluate("(el) => el.click()", first_link)
+                ret_cards = await _wait_for_flight_cards(page, timeout=30, label="return flights")
+                for c in ret_cards[:5]:
+                    link = await c.query_selector("div.JMc5Xc")
+                    aria = await link.get_attribute("aria-label") if link else ""
+                    txt  = await c.inner_text()
+                    parsed = _parse_flight_card(aria, txt)
+                    if parsed.get("airline") or parsed.get("price"):
+                        returning.append(parsed)
+
+        if airline and outbound:
+            air_low = airline.strip().lower()
+            matched = [f for f in outbound if air_low in f.get("airline", "").lower()]
+            others  = [f for f in outbound if air_low not in f.get("airline", "").lower()]
+            if matched:
+                outbound = matched + others
+
+        return outbound, returning, page.url
+
+    finally:
+        await browser.close()
+        await pw.stop()
+
+
+def scrape_flights_headless(
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    passengers:   int        = 1,
+    cabin:        str        = "economy",
+    carry_on:     int        = 0,
+    checked_bags: int        = 0,
+    airline:      str | None = None,
+) -> tuple[list[dict], list[dict], str]:
+    return asyncio.run(
+        scrape_flights_headless_async(
+            origin, destination, date, return_date, passengers, cabin, carry_on, checked_bags, airline
+        )
     )
 
-def _search_flights_browser(
-    origin:      str,
-    destination: str,
-    date:        str,
-    return_date: str | None,
-    passengers:  int,
-    cabin:       str,
-) -> tuple[str, str]:
-    import time
-    from actions.browser_control import browser_control
 
-    url = _build_google_flights_url(
-        origin, destination, date, return_date, passengers, cabin
+def _parse_flights_regex(raw_text: str) -> list[dict]:
+    pattern = re.compile(
+        r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*[–\-—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*\n+"
+        r"([^\n]+)\s*\n+"
+        r"(\d+\s*h[r]?\s*(?:\d+\s*m(?:in)?)?)\s*\n+"
+        r"[^\n]+\s*\n+"
+        r"(Nonstop|\d+\s*stop[s]?)"
+        r"(?:.*?\n+)*?"
+        r"(\$\d+)",
+        re.MULTILINE
     )
+    flights = []
+    for m in pattern.finditer(raw_text):
+        dep, arr, airline, dur, stops, price = m.groups()
+        airline_clean = airline.split("Operated")[0].strip()
+        stop_count = 0 if "nonstop" in stops.lower() else int(re.search(r"\d+", stops).group() if re.search(r"\d+", stops) else 1)
+        flights.append({
+            "airline": airline_clean,
+            "departure": dep.strip(),
+            "arrival": arr.strip(),
+            "duration": dur.strip(),
+            "stops": stop_count,
+            "price": price.strip(),
+            "currency": "USD"
+        })
+        if len(flights) >= 5:
+            break
+    return flights
 
-    print(f"[FlightFinder] 🌐 Opening: {url}")
-    browser_control({"action": "go_to", "url": url})
-    time.sleep(5)
 
-    raw = browser_control({"action": "get_text"})
-    return (raw or ""), url
 def _parse_flights_with_gemini(
     raw_text:    str,
     origin:      str,
@@ -148,107 +507,217 @@ def _parse_flights_with_gemini(
     prompt = (
         f"Extract flight options from {origin} to {destination} on {date} "
         f"from this Google Flights page text:\n\n{raw_text[:12000]}\n\n"
-        f"Return a JSON array of up to 5 flights:\n"
-        f'[{{"airline":"...","departure":"HH:MM","arrival":"HH:MM",'
-        f'"duration":"Xh Ym","stops":0,"price":"...","currency":"USD"}}]\n'
-        f"If no flights found, return: []"
+        f"Return ONLY a JSON object with this exact structure:\n"
+        f'{{"flights": [{{"airline":"...","departure":"HH:MM","arrival":"HH:MM",'
+        f'"duration":"Xh Ym","stops":0,"price":"...","currency":"USD"}}]}}\n'
+        f'If no flights found, return: {{"flights": []}}'
     )
 
     try:
-        result = client.chat_json(prompt, system="Return only valid JSON. No extra text.")
-        return result if isinstance(result, list) else []
+        result = client.chat_json(prompt, system="Return only valid JSON object. No extra text.")
+        flights = result.get("flights") if isinstance(result, dict) else (result if isinstance(result, list) else [])
+        if flights:
+            return flights
     except Exception as e:
         print(f"[FlightFinder] ⚠️ parse failed: {e}")
-        return []
+
+    # Fallback to direct regex parser
+    fallback = _parse_flights_regex(raw_text)
+    if fallback:
+        print(f"[FlightFinder] ✈️ Regex fallback found {len(fallback)} flights")
+        return fallback
+
+    return []
+
 
 def _format_spoken(
-    flights:     list[dict],
-    origin:      str,
-    destination: str,
-    date:        str,
+    outbound:     list[dict],
+    returning:    list[dict],
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None = None,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
 ) -> str:
-    if not flights:
+    trip_desc = f"{origin} to {destination} on {date}" + (f" returning {return_date}" if return_date else "")
+    if not outbound:
         return (
-            f"I couldn't find any flights from {origin} to {destination} "
-            f"on {date}, sir. The page may not have loaded correctly."
+            f"I couldn't find any flights for {trip_desc}, sir. "
+            f"The page may not have loaded correctly."
         )
 
-    lines = [f"Here are the top flights from {origin} to {destination} on {date}, sir."]
+    # Baggage description phrasing
+    bag_desc = ""
+    if carry_on > 0 and checked_bags > 0:
+        bag_desc = f" with {carry_on} carry-on and {checked_bags} checked bag{'s' if checked_bags > 1 else ''} included"
+    elif carry_on > 0:
+        bag_desc = f" with {carry_on} carry-on bag{'s' if carry_on > 1 else ''} included"
+    elif checked_bags > 0:
+        bag_desc = f" with {checked_bags} checked bag{'s' if checked_bags > 1 else ''} included"
 
-    for i, f in enumerate(flights[:5], 1):
-        airline   = f.get("airline",   "Unknown airline")
-        departure = f.get("departure", "--:--")
-        arrival   = f.get("arrival",   "--:--")
-        duration  = f.get("duration",  "")
-        stops     = f.get("stops",     0)
-        price     = f.get("price",     "")
-        currency  = f.get("currency",  "")
+    # ONE-WAY TRIP
+    if not return_date or not returning:
+        lines = [f"Here are the top one-way flights from {origin} to {destination} on {date}{bag_desc}, sir."]
+        for i, f in enumerate(outbound[:3], 1):
+            airline   = f.get("airline",   "Unknown airline")
+            departure = f.get("departure", "--:--")
+            arrival   = f.get("arrival",   "--:--")
+            duration  = f.get("duration",  "")
+            stops     = f.get("stops",     0)
+            price     = f.get("price",     "")
+            currency  = f.get("currency",  "USD")
 
-        stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
-        price_str = f"{price} {currency}".strip() if price else "price unavailable"
-        dur_str   = f", {duration}" if duration else ""
+            stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
+            price_str = f"{price} {currency}".strip() if price else "price unavailable"
+            dur_str   = f", {duration}" if duration else ""
 
+            # Check if basic economy lacks carry-on
+            bag_note = ""
+            if carry_on == 0 and checked_bags == 0:
+                if f.get("carry_on") == 0:
+                    bag_note = " (basic fare, no carry-on included)"
+                elif f.get("carry_on") == 1:
+                    bag_note = " (1 carry-on included)"
+
+            lines.append(
+                f"Option {i}: {airline}, departing {departure}, "
+                f"arriving {arrival}{dur_str}, {stop_str}, {price_str}{bag_note}."
+            )
+
+        priced = [f for f in outbound if f.get("price")]
+        if priced:
+            cheapest = min(
+                priced,
+                key=lambda x: int(re.sub(r"[^\d]", "", str(x["price"])) or "999999"),
+            )
+            lines.append(
+                f"The cheapest one-way option is {cheapest.get('airline')} "
+                f"at {cheapest.get('price')} {cheapest.get('currency', 'USD')}."
+            )
+        return " ".join(lines)
+
+    # ROUND-TRIP
+    lines = [f"Here are the flight options for a round trip from {origin} to {destination}, departing {date} and returning {return_date}{bag_desc}, sir."]
+    out0 = outbound[0]
+    out_stops = "non-stop" if out0.get("stops", 0) == 0 else f"{out0.get('stops')} stop{'s' if out0.get('stops', 0) > 1 else ''}"
+    lines.append(
+        f"For your outbound flight on {date}, the recommended option is {out0.get('airline')}, leaving {origin} at {out0.get('departure')} and arriving in {destination} at {out0.get('arrival')} ({out0.get('duration')}, {out_stops})."
+    )
+
+    cheapest_ret = min(
+        returning,
+        key=lambda x: int(re.sub(r"[^\d]", "", str(x.get("price", "999999"))) or "999999")
+    )
+    same_airline_ret = next(
+        (r for r in returning if out0.get("airline", "").lower() in r.get("airline", "").lower()),
+        None
+    )
+
+    cheap_stops = "non-stop" if cheapest_ret.get("stops", 0) == 0 else f"{cheapest_ret.get('stops')} stop{'s' if cheapest_ret.get('stops', 0) > 1 else ''}"
+
+    if cheapest_ret.get("airline", "").lower() != out0.get("airline", "").lower() or cheapest_ret.get("separate_tickets"):
         lines.append(
-            f"Option {i}: {airline}, departing {departure}, "
-            f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+            f"The lowest combined round-trip total is {cheapest_ret.get('price')} {cheapest_ret.get('currency', 'USD')}. "
+            f"Please note this lowest price requires separate tickets: flying {out0.get('airline')} outbound and {cheapest_ret.get('airline')} on the return flight departing at {cheapest_ret.get('departure')} ({cheapest_ret.get('duration')}, {cheap_stops})."
+        )
+        if same_airline_ret and same_airline_ret != cheapest_ret:
+            same_stops = "non-stop" if same_airline_ret.get("stops", 0) == 0 else f"{same_airline_ret.get('stops')} stop{'s' if same_airline_ret.get('stops', 0) > 1 else ''}"
+            lines.append(
+                f"If you prefer to fly {out0.get('airline')} both ways {same_stops}, the total round-trip fare is {same_airline_ret.get('price')} {same_airline_ret.get('currency', 'USD')}, returning at {same_airline_ret.get('departure')} and arriving at {same_airline_ret.get('arrival')}."
+            )
+    else:
+        lines.append(
+            f"The round-trip flight on {cheapest_ret.get('airline')} is {cheapest_ret.get('price')} {cheapest_ret.get('currency', 'USD')} total, returning at {cheapest_ret.get('departure')} ({cheap_stops})."
         )
 
-    # Cheapest — strip non-digits for comparison
-    priced = [f for f in flights if f.get("price")]
-    if priced:
-        cheapest = min(
-            priced,
-            key=lambda x: int(re.sub(r"[^\d]", "", str(x["price"])) or "999999"),
-        )
+    if len(outbound) > 1:
+        alt = outbound[1]
+        alt_stops = "non-stop" if alt.get("stops", 0) == 0 else f"{alt.get('stops')} stop{'s' if alt.get('stops', 0) > 1 else ''}"
+        alt_dur = f", {alt.get('duration')}" if alt.get("duration") else ""
         lines.append(
-            f"The cheapest option is {cheapest.get('airline')} "
-            f"at {cheapest.get('price')} {cheapest.get('currency', '')}."
+            f"Alternatively, {alt.get('airline')} offers outbound departures at {alt.get('departure')}{alt_dur} ({alt_stops}) with round-trip fares starting from {alt.get('price')}."
         )
 
     return " ".join(lines)
 
 
 def _format_text_report(
-    flights:     list[dict],
-    origin:      str,
-    destination: str,
-    date:        str,
-    return_date: str | None,
-    page_url:    str,
+    outbound:     list[dict],
+    returning:    list[dict],
+    origin:       str,
+    destination:  str,
+    date:         str,
+    return_date:  str | None,
+    page_url:     str,
+    carry_on:     int = 0,
+    checked_bags: int = 0,
 ) -> str:
+    bag_filter_str = f"{carry_on} carry-on, {checked_bags} checked" if (carry_on or checked_bags) else "None (Base fare)"
     lines = [
         "JARVIS — Flight Search Results",
         "─" * 50,
-        f"Route     : {origin} → {destination}",
-        f"Date      : {date}",
+        f"Trip Type      : {'Round Trip' if return_date else 'One Way'}",
+        f"Route          : {origin} → {destination}",
+        f"Departure      : {date}",
     ]
     if return_date:
-        lines.append(f"Return    : {return_date}")
+        lines.append(f"Return         : {return_date}")
     lines += [
-        f"Searched  : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        f"Source    : {page_url}",
+        f"Baggage Filter : {bag_filter_str}",
+        f"Searched       : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Source         : {page_url}",
         "─" * 50,
         "",
     ]
 
-    if not flights:
+    if not outbound:
         lines.append("No flights found.")
-    else:
-        for i, f in enumerate(flights, 1):
+        return "\n".join(lines)
+
+    lines.append(f"OUTBOUND FLIGHTS ({origin} → {destination}):")
+    for i, f in enumerate(outbound, 1):
+        stops    = f.get("stops", 0)
+        stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+        c_bag = f"{f.get('carry_on')} carry-on" if f.get('carry_on') is not None else "N/A"
+        chk_bag = f"{f.get('checked_bags')} checked" if f.get('checked_bags') is not None else "N/A"
+        lines += [
+            f"Flight {i}:",
+            f"  Airline   : {f.get('airline',   'N/A')}",
+            f"  Departure : {f.get('departure', 'N/A')}",
+            f"  Arrival   : {f.get('arrival',   'N/A')}",
+            f"  Duration  : {f.get('duration',  'N/A')}",
+            f"  Stops     : {stop_str}",
+            f"  Baggage   : {c_bag}, {chk_bag}",
+            f"  Price     : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
+            "",
+        ]
+
+    if return_date and returning:
+        lines.append("─" * 50)
+        lines.append(f"RETURN OPTIONS ({destination} → {origin} on {return_date}):")
+        for i, f in enumerate(returning, 1):
             stops    = f.get("stops", 0)
             stop_str = "Non-stop" if stops == 0 else f"{stops} stop(s)"
+            sep_str  = " [Separate Tickets]" if f.get("separate_tickets") else ""
+            c_bag = f"{f.get('carry_on')} carry-on" if f.get('carry_on') is not None else "N/A"
+            chk_bag = f"{f.get('checked_bags')} checked" if f.get('checked_bags') is not None else "N/A"
             lines += [
-                f"Flight {i}:",
-                f"  Airline   : {f.get('airline',   'N/A')}",
-                f"  Departure : {f.get('departure', 'N/A')}",
-                f"  Arrival   : {f.get('arrival',   'N/A')}",
-                f"  Duration  : {f.get('duration',  'N/A')}",
-                f"  Stops     : {stop_str}",
-                f"  Price     : {f.get('price', 'N/A')} {f.get('currency', '')}",
-                "",
+                f"Option {i}{sep_str}:",
+                f"  Airline       : {f.get('airline',   'N/A')}",
+                f"  Departure     : {f.get('departure', 'N/A')}",
+                f"  Arrival       : {f.get('arrival',   'N/A')}",
+                f"  Duration      : {f.get('duration',  'N/A')}",
+                f"  Stops         : {stop_str}",
+                f"  Baggage       : {c_bag}, {chk_bag}",
+                f"  Total RT Fare : {f.get('price', 'N/A')} {f.get('currency', 'USD')}",
             ]
+            if f.get("layover"):
+                lines.append(f"  Layovers      : {f.get('layover')}")
+            lines.append("")
 
     return "\n".join(lines)
+
 
 def _save_to_desktop(content: str, origin: str, destination: str) -> str:
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -284,51 +753,98 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     cabin       = params.get("cabin", "economy").strip().lower()
     save        = bool(params.get("save", False))
 
+    # Parse baggage requirements
+    carry_on     = max(0, int(params.get("carry_on") or params.get("carryon") or 0))
+    checked_bags = max(0, int(params.get("checked_bags") or params.get("checked_bag") or params.get("checked") or 0))
+    preferred_airline = (params.get("airline") or "").strip().lower()
+    bags_raw     = str(params.get("bags") or "").lower()
+    if "both" in bags_raw:
+        carry_on     = max(carry_on, 1)
+        checked_bags = max(checked_bags, 1)
+    elif "carry" in bags_raw:
+        carry_on = max(carry_on, 1)
+    elif "check" in bags_raw:
+        checked_bags = max(checked_bags, 1)
+
     if not origin or not destination:
         return "Please provide both origin and destination, sir."
     if not date_raw:
         return "Please provide a departure date, sir."
 
-    # Normalise cabin value
     if cabin not in _CABIN_CODE:
         cabin = "economy"
 
     date        = _parse_date(date_raw)
     return_date = _parse_date(return_raw) if return_raw else None
 
+    # Handle year rollover for return trips (e.g. Dec 19 -> Jan 3)
+    if return_date and date:
+        try:
+            dep_dt = datetime.strptime(date, "%Y-%m-%d")
+            ret_dt = datetime.strptime(return_date, "%Y-%m-%d")
+            if ret_dt < dep_dt:
+                ret_dt = ret_dt.replace(year=dep_dt.year + 1)
+                return_date = ret_dt.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    bag_log = f" | bags: {carry_on} carry-on, {checked_bags} checked" if (carry_on or checked_bags) else ""
     if player:
-        player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
+        log_msg = f"[FlightFinder] {origin} → {destination} ({date} to {return_date}){bag_log}" if return_date else f"[FlightFinder] {origin} → {destination} on {date}{bag_log}"
+        player.write_log(log_msg)
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak_msg = f"Searching round-trip flights from {origin} to {destination}, departing {date} and returning {return_date}, sir." if return_date else f"Searching flights from {origin} to {destination} on {date}, sir."
+        speak(speak_msg)
 
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
         f"{' → ' + return_date if return_date else ''}"
-        f" | {cabin} | {passengers} pax"
+        f" | {cabin} | {passengers} pax{bag_log}"
     )
 
     try:
-        raw_text, page_url = _search_flights_browser(
-            origin, destination, date, return_date, passengers, cabin
-        )
+        outbound: list[dict] = []
+        returning: list[dict] = []
+        page_url = ""
+        raw_text = ""
 
-        if not raw_text:
+        try:
+            _ensure_started()
+            outbound, returning, page_url, raw_text = _bt.run(
+                _scrape_flights_async(origin, destination, date, return_date, passengers, cabin, carry_on, checked_bags),
+                timeout=75
+            )
+        except Exception as scrape_err:
+            print(f"[FlightFinder] ⚠️ Direct browser scrape error: {scrape_err}, trying fallback...")
+            page_url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
+            browser_control({"action": "go_to", "url": page_url})
+            import time
+            time.sleep(4)
+            raw_text = browser_control({"action": "get_text", "max_chars": 15000})
+
+        # If DOM scraping produced no outbound cards, use Gemini/regex fallback on raw_text
+        if not outbound and raw_text:
+            outbound = _parse_flights_with_gemini(raw_text, origin, destination, date)
+
+        if preferred_airline and outbound:
+            matched = [f for f in outbound if preferred_airline in f.get("airline", "").lower()]
+            others = [f for f in outbound if preferred_airline not in f.get("airline", "").lower()]
+            if matched:
+                outbound = matched + others
+
+        if not outbound and not raw_text:
             return "Could not retrieve flight data, sir. The page may not have loaded."
 
-        if speak:
-            speak("Analysing the results now, sir.")
-
-        flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
-        spoken  = _format_spoken(flights, origin, destination, date)
+        spoken = _format_spoken(outbound, returning, origin, destination, date, return_date, carry_on, checked_bags)
 
         if speak:
             speak(spoken)
 
         result = spoken
 
-        if save and flights:
-            report     = _format_text_report(flights, origin, destination, date, return_date, page_url)
+        if save and outbound:
+            report     = _format_text_report(outbound, returning, origin, destination, date, return_date, page_url, carry_on, checked_bags)
             saved_path = _save_to_desktop(report, origin, destination)
             result    += f" Results saved to Desktop: {saved_path}"
 
