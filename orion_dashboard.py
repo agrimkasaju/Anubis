@@ -1060,9 +1060,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 def generate_stock_pdf(symbol: str) -> bytes | None:
     symbol = symbol.strip().upper()
+    stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
+
+    # Fast path: query the Stock Analyzer container's PDF engine directly
+    try:
+        req_direct = urllib.request.Request(f"{stock_server}/api/stock/report/pdf?ticker={symbol}")
+        with urllib.request.urlopen(req_direct, timeout=15) as res_direct:
+            if res_direct.status == 200:
+                return res_direct.read()
+    except Exception:
+        pass
+
+    # Secondary path: generate report locally
     data = None
     try:
-        req = urllib.request.Request("http://localhost:8000/api/history")
+        req = urllib.request.Request(f"{stock_server}/api/history")
         with urllib.request.urlopen(req, timeout=3) as res:
             hist = json.loads(res.read().decode("utf-8"))
             data = next((item for item in hist if item.get("ticker") == symbol), None)
@@ -1071,7 +1083,7 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
 
     if not data:
         try:
-            req = urllib.request.Request(f"http://localhost:8000/analyze/{symbol}")
+            req = urllib.request.Request(f"{stock_server}/analyze/{symbol}")
             with urllib.request.urlopen(req, timeout=60) as res:
                 data = json.loads(res.read().decode("utf-8"))
         except Exception:
@@ -1600,8 +1612,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
 
         # API: Generate and Serve Stock Analysis PDF Report
-        if path == "/api/stock/pdf":
-            symbol = qs.get("symbol", [""])[0].strip().upper()
+        if path in ("/api/stock/pdf", "/api/stock/report/pdf"):
+            symbol = (qs.get("symbol", [""])[0] or qs.get("ticker", [""])[0]).strip().upper()
             if not symbol or not re.match(r"^[A-Z0-9.-]{1,10}$", symbol):
                 self._send_json({"error": "Invalid ticker"}, status=400)
                 return
