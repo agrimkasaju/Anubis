@@ -170,15 +170,19 @@ def get_job_history() -> dict:
         cl_pdf = None
         comb_pdf = None
 
+        safe_comp = "".join(x for x in comp if x.isalnum() or x in " _-").replace(" ", "_").lower()
+        raw_comp = comp.lower()
+
         if OUTPUT_DIR.exists():
             for p in OUTPUT_DIR.iterdir():
-                if p.name.lower().startswith(comp.lower()):
-                    if "resume" in p.name.lower() and p.suffix == ".pdf":
+                p_lower = p.name.lower()
+                if p_lower.startswith(safe_comp) or p_lower.startswith(raw_comp):
+                    if "resume" in p_lower and p.suffix.lower() == ".pdf":
                         res_pdf = f"output/{p.name}"
                         mtime = min(mtime, p.stat().st_mtime)
-                    elif "cover_letter" in p.name.lower() and p.suffix == ".pdf":
+                    elif "cover_letter" in p_lower and p.suffix.lower() == ".pdf":
                         cl_pdf = f"output/{p.name}"
-                    elif "combined" in p.name.lower() and p.suffix == ".pdf":
+                    elif "combined" in p_lower and p.suffix.lower() == ".pdf":
                         comb_pdf = f"output/{p.name}"
 
         entry = {

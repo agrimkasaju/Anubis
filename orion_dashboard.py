@@ -1472,6 +1472,27 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             pdf_dir = Path("/home/grim/Downloads/ai_job_search/ai_job_search/output").resolve()
             target_pdf = (pdf_dir / clean_name).resolve()
 
+            # Intelligent resolution for space vs underscore variants
+            if not (target_pdf.is_relative_to(pdf_dir) and target_pdf.is_file()):
+                for alt in [
+                    clean_name.replace(" ", "_"),
+                    clean_name.replace("_", " "),
+                    "".join(x for x in clean_name if x.isalnum() or x in "._-").replace(" ", "_"),
+                ]:
+                    cand = (pdf_dir / alt).resolve()
+                    if cand.is_relative_to(pdf_dir) and cand.is_file():
+                        target_pdf = cand
+                        clean_name = alt
+                        break
+
+            if not (target_pdf.is_relative_to(pdf_dir) and target_pdf.is_file()):
+                cand_norm = clean_name.lower().replace(" ", "_")
+                for p in pdf_dir.iterdir():
+                    if p.is_file() and p.name.lower().replace(" ", "_") == cand_norm:
+                        target_pdf = p.resolve()
+                        clean_name = p.name
+                        break
+
             # Intelligent resolution for generic names (e.g. resume.pdf, cover_letter.pdf, combined.pdf)
             if not (target_pdf.is_relative_to(pdf_dir) and target_pdf.is_file()):
                 generic_lower = clean_name.lower()
