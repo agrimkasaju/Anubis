@@ -211,9 +211,9 @@ async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> 
         return
 
     btn = None
-    for _ in range(6):
+    for _ in range(10):
         btn = await page.query_selector('button[aria-label*="Bags"]')
-        if btn:
+        if btn and await btn.is_visible():
             break
         await asyncio.sleep(0.5)
 
@@ -230,14 +230,14 @@ async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> 
         for _ in range(carry_on):
             if add_carry:
                 await add_carry.click()
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
 
     if checked_bags > 0:
         add_checked = await page.query_selector('button[aria-label="Add checked bag"]')
         for _ in range(checked_bags):
             if add_checked:
                 await add_checked.click()
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.3)
 
     # Apply bag filters by clicking Done on the dialog
     done_clicked = False
@@ -249,7 +249,72 @@ async def _apply_bag_filters(page, carry_on: int = 0, checked_bags: int = 0) -> 
     if not done_clicked:
         await page.keyboard.press("Escape")
     # Wait for Google Flights to re-sort results with bag fees included
-    await asyncio.sleep(2.0)
+    await asyncio.sleep(1.5)
+
+
+async def _wait_for_flight_cards(page, timeout: int = 30, label: str = "flights") -> list:
+    """
+    Waits for Google Flights search cards (li.pIav2d) to render.
+    Handles 'Oops, something went wrong' error states by auto-clicking the 'Reload' button
+    and recovers via page reload if necessary.
+    """
+    reloads_clicked = 0
+    hard_reload_done = False
+
+    # Check for cookie/consent dialog if present
+    try:
+        consent = await page.query_selector('button:has-text("Reject all"), button:has-text("Accept all")')
+        if consent and await consent.is_visible():
+            await consent.click()
+            await asyncio.sleep(1.0)
+    except Exception:
+        pass
+
+    for i in range(int(timeout * 2)):
+        cards = await page.query_selector_all("li.pIav2d")
+        if cards:
+            return cards
+
+        # Detect 'Oops, something went wrong' banner / Reload button
+        reload_btn = await page.query_selector(
+            'button:has-text("Reload"), div[role="button"]:has-text("Reload"), [aria-label*="Reload"]'
+        )
+        if reload_btn and await reload_btn.is_visible():
+            reloads_clicked += 1
+            print(f"[FlightFinder] 🔄 Detected 'Oops, something went wrong' banner during {label}. Auto-clicking Reload (attempt {reloads_clicked})...")
+            try:
+                await reload_btn.click()
+                await asyncio.sleep(2.0)
+                continue
+            except Exception as e:
+                print(f"[FlightFinder] ⚠️ Error clicking reload: {e}")
+
+        # If stuck in error state or reload was clicked twice with no effect, try hard page reload
+        if reloads_clicked >= 2 and not hard_reload_done:
+            print(f"[FlightFinder] 🔄 Multiple reload clicks did not recover {label}. Performing page reload...")
+            try:
+                hard_reload_done = True
+                await page.reload(wait_until="domcontentloaded")
+                await asyncio.sleep(2.0)
+                continue
+            except Exception as re:
+                print(f"[FlightFinder] ⚠️ Page reload failed: {re}")
+
+        # Check for genuine "No flights found" after giving at least 5 seconds
+        if i >= 10:
+            try:
+                txt = await page.inner_text("body")
+                lower_txt = txt.lower()
+                if ("no flights found" in lower_txt or "no matching flights" in lower_txt) and "oops" not in lower_txt:
+                    print(f"[FlightFinder] ℹ️ Google Flights returned no matching flights for {label}.")
+                    return []
+            except Exception:
+                pass
+
+        await asyncio.sleep(0.5)
+
+    print(f"[FlightFinder] ⚠️ Timed out waiting for {label} after {timeout} seconds.")
+    return []
 
 
 async def _scrape_flights_async(
@@ -267,20 +332,17 @@ async def _scrape_flights_async(
 
     url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
     print(f"[FlightFinder] 🌐 Navigating to: {url}")
-    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    await page.goto(url, wait_until="domcontentloaded", timeout=25000)
 
-    # Wait for flight cards to render
-    for _ in range(12):
-        await asyncio.sleep(0.5)
-        cards = await page.query_selector_all("li.pIav2d")
-        if cards:
-            break
+    # Wait for flight cards to render (with auto-reload recovery)
+    cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (initial)")
 
     # Apply bag filters if requested by user
     if carry_on > 0 or checked_bags > 0:
         await _apply_bag_filters(page, carry_on, checked_bags)
+        # Re-wait for flight cards to update with bag fees applied
+        cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (with bags)")
 
-    cards = await page.query_selector_all("li.pIav2d")
     outbound: list[dict] = []
     for c in cards[:5]:
         link = await c.query_selector("div.JMc5Xc")
@@ -296,14 +358,8 @@ async def _scrape_flights_async(
         first_link = await cards[0].query_selector("div.JMc5Xc")
         if first_link:
             await page.evaluate("(el) => el.click()", first_link)
-            # Wait for returning flights page to load
-            for _ in range(16):
-                await asyncio.sleep(0.5)
-                txt = await page.inner_text("body")
-                if "return to" in txt.lower() or "returning flights" in txt.lower():
-                    break
-
-            ret_cards = await page.query_selector_all("li.pIav2d")
+            # Wait for returning flights page to load (with auto-reload recovery)
+            ret_cards = await _wait_for_flight_cards(page, timeout=30, label="return flights")
             for c in ret_cards[:5]:
                 link = await c.query_selector("div.JMc5Xc")
                 aria = await link.get_attribute("aria-label") if link else ""
@@ -346,24 +402,15 @@ async def scrape_flights_headless_async(
 
     url = _build_google_flights_url(origin, destination, date, return_date, passengers, cabin)
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=25000)
 
-        cards = []
-        for _ in range(25):
-            await asyncio.sleep(0.5)
-            cards = await page.query_selector_all("li.pIav2d")
-            if cards:
-                break
+        # Wait for flight cards (with auto-reload recovery)
+        cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (initial)")
 
         if carry_on > 0 or checked_bags > 0:
             await _apply_bag_filters(page, carry_on, checked_bags)
+            cards = await _wait_for_flight_cards(page, timeout=30, label="outbound flights (with bags)")
 
-        cards = []
-        for _ in range(25):
-            await asyncio.sleep(0.5)
-            cards = await page.query_selector_all("li.pIav2d")
-            if cards:
-                break
         outbound: list[dict] = []
         for c in cards[:5]:
             link = await c.query_selector("div.JMc5Xc")
@@ -378,13 +425,7 @@ async def scrape_flights_headless_async(
             first_link = await cards[0].query_selector("div.JMc5Xc")
             if first_link:
                 await page.evaluate("(el) => el.click()", first_link)
-                for _ in range(16):
-                    await asyncio.sleep(0.5)
-                    txt = await page.inner_text("body")
-                    if "return to" in txt.lower() or "returning flights" in txt.lower():
-                        break
-
-                ret_cards = await page.query_selector_all("li.pIav2d")
+                ret_cards = await _wait_for_flight_cards(page, timeout=30, label="return flights")
                 for c in ret_cards[:5]:
                     link = await c.query_selector("div.JMc5Xc")
                     aria = await link.get_attribute("aria-label") if link else ""
@@ -772,7 +813,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
             _ensure_started()
             outbound, returning, page_url, raw_text = _bt.run(
                 _scrape_flights_async(origin, destination, date, return_date, passengers, cabin, carry_on, checked_bags),
-                timeout=35
+                timeout=75
             )
         except Exception as scrape_err:
             print(f"[FlightFinder] ⚠️ Direct browser scrape error: {scrape_err}, trying fallback...")
