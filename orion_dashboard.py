@@ -1217,52 +1217,20 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     return bytes(pdf.output())
 
 
-def get_job_status_file() -> Path:
-    ipc_dir = Path(os.environ.get("ORION_IPC_DIR") or (Path.home() / ".orion_ipc"))
-    ipc_dir.mkdir(parents=True, exist_ok=True)
-    p = ipc_dir / "orion_job_status.json"
-    if not p.exists() and (Path.home() / ".orion_job_status.json").exists():
-        return Path.home() / ".orion_job_status.json"
-    return p
-
-
 def launch_job_pipeline(mode: str = "scrape", url: str = "", company: str = "", title: str = "", seasons: str = "all") -> tuple[bool, int | None, str]:
-    """Helper to start the job search pipeline (via Docker if running, or host Python)."""
-    use_docker = False
-    try:
-        res = subprocess.run(
-            ["docker", "ps", "--filter", "name=ai_job_search_service", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            timeout=1
-        )
-        if "ai_job_search_service" in res.stdout.strip():
-            use_docker = True
-    except Exception:
-        use_docker = False
+    """Helper to start the headless job search pipeline in background with proper environment."""
+    python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
+    script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
 
-    if use_docker:
-        cmd = ["docker", "exec", "ai_job_search_service", "python", "-m", "framework", "--mode", mode]
-        if mode == "manual" and url:
-            cmd.extend(["--url", url])
-            if company:
-                cmd.extend(["--company", company])
-            if title:
-                cmd.extend(["--title", title])
-        elif mode == "scrape" and seasons and seasons != "all":
-            cmd.extend(["--seasons", seasons])
-    else:
-        python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
-        script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
-        cmd = [python_bin, script_path, "--mode", mode]
-        if mode == "manual" and url:
-            cmd.extend(["--url", url])
-            if company:
-                cmd.extend(["--company", company])
-            if title:
-                cmd.extend(["--title", title])
-        elif mode == "scrape" and seasons and seasons != "all":
-            cmd.extend(["--seasons", seasons])
+    cmd = [python_bin, script_path, "--mode", mode]
+    if mode == "manual" and url:
+        cmd.extend(["--url", url])
+        if company:
+            cmd.extend(["--company", company])
+        if title:
+            cmd.extend(["--title", title])
+    elif mode == "scrape" and seasons and seasons != "all":
+        cmd.extend(["--seasons", seasons])
 
     env = os.environ.copy()
     job_env_file = Path("/home/grim/Downloads/ai_job_search/.env")
@@ -1296,7 +1264,7 @@ def launch_job_pipeline(mode: str = "scrape", url: str = "", company: str = "", 
             stderr=log_file,
             start_new_session=True
         )
-        status_file = get_job_status_file()
+        status_file = Path.home() / ".orion_job_status.json"
         status_file.write_text(json.dumps({
             "running": True,
             "status_text": "Starting background pipeline...",
@@ -1475,7 +1443,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         # API: Query Headless Job Search Pipeline Status
         if path == "/api/job/status":
-            status_file = get_job_status_file()
+            status_file = Path.home() / ".orion_job_status.json"
             if status_file.exists():
                 try:
                     data = json.loads(status_file.read_text(encoding="utf-8"))
@@ -1898,7 +1866,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         # API: Stop Headless Job Search Pipeline
         if path == "/api/job/stop":
-            status_file = get_job_status_file()
+            status_file = Path.home() / ".orion_job_status.json"
             if status_file.exists():
                 try:
                     data = json.loads(status_file.read_text(encoding="utf-8"))

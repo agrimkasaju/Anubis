@@ -1,12 +1,9 @@
-import os
 import json
 import asyncio
 from pathlib import Path
 
-# Shared directory for IPC communication between Orion host & Docker
-IPC_DIR = Path(os.environ.get("ORION_IPC_DIR") or (Path.home() / ".orion_ipc"))
-IPC_DIR.mkdir(parents=True, exist_ok=True)
-IPC_FILE = IPC_DIR / "orion_job_ipc.json"
+# Shared absolute path in your home directory
+IPC_FILE = Path.home() / ".orion_job_ipc.json"
 
 class JobSubmissionBridge:
     async def request_approval(self, job_data: dict) -> bool:
