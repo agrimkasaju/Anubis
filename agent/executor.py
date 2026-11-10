@@ -253,7 +253,7 @@ def _call_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
         act = (parameters.get("action") or "track").lower().strip()
         if act == "list":
             return list_flight_trackers()
-        elif act == "cancel":
+        elif act in ("cancel", "stop", "delete"):
             return cancel_flight_tracker(origin=parameters.get("origin", ""), destination=parameters.get("destination", ""))
         else:
             res = add_flight_tracker(

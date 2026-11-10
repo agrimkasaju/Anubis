@@ -535,13 +535,13 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "flight_tracker",
-        "description": "Sets up autonomous background flight price tracking tailored to evening laptop hours (5:00 PM and 8:30 PM with wake catch-up until 9:30 PM), alerting on price drops via desktop chime and Google Calendar deal notifications.",
+        "description": "Sets up, lists, or stops autonomous background flight price tracking. Use action='cancel' or 'stop' when the user asks to stop tracking flights.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":       {"type": "STRING",  "description": "track | list | cancel | sync_calendar"},
-                "origin":       {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination":  {"type": "STRING",  "description": "Arrival city or airport code"},
+                "action":       {"type": "STRING",  "description": "track | list | cancel | stop | sync_calendar"},
+                "origin":       {"type": "STRING",  "description": "Departure city or airport code (optional when cancelling)"},
+                "destination":  {"type": "STRING",  "description": "Arrival city or airport code (optional when cancelling)"},
                 "date":         {"type": "STRING",  "description": "Departure date for the flight"},
                 "return_date":  {"type": "STRING",  "description": "Return date for round trips"},
                 "end_date":     {"type": "STRING",  "description": "When to stop polling (e.g. 'next Saturday', '2026-11-14')"},
@@ -993,7 +993,7 @@ class JarvisLive:
                 action = (args.get("action") or "track").lower().strip()
                 if action == "list":
                     r = list_flight_trackers()
-                elif action == "cancel":
+                elif action in ("cancel", "stop", "delete"):
                     r = cancel_flight_tracker(origin=args.get("origin", ""), destination=args.get("destination", ""))
                 elif action in ("sync_calendar", "sync_to_calendar", "calendar_sync"):
                     r = sync_active_trackers_to_calendar()

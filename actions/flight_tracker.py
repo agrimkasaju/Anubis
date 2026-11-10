@@ -575,23 +575,53 @@ def list_flight_trackers(include_expired: bool = False) -> str:
     return "\n".join(lines)
 
 
-def cancel_flight_tracker(origin: str, destination: str) -> str:
-    """Cancels tracking for a specific route."""
+def cancel_flight_tracker(origin: str = "", destination: str = "") -> str:
+    """Cancels tracking for a specific route or all active flight trackers."""
     data = _load_data()
-    cancelled = 0
-    for t in data.get("trackers", []):
-        if (
-            t.get("status") == "ACTIVE"
-            and origin.lower() in t.get("origin", "").lower()
-            and destination.lower() in t.get("destination", "").lower()
-        ):
-            t["status"] = "CANCELLED"
-            cancelled += 1
+    active_trackers = [t for t in data.get("trackers", []) if t.get("status") == "ACTIVE"]
+    if not active_trackers:
+        return "You have no active flight price trackers running, sir."
 
-    if cancelled > 0:
+    origin_clean = origin.strip().lower()
+    dest_clean = destination.strip().lower()
+
+    cancelled_routes = []
+    for t in active_trackers:
+        t_orig = t.get("origin", "").lower()
+        t_dest = t.get("destination", "").lower()
+
+        match = False
+        if not origin_clean and not dest_clean:
+            match = True
+        elif origin_clean and dest_clean:
+            match = origin_clean in t_orig and dest_clean in t_dest
+        elif origin_clean:
+            match = origin_clean in t_orig
+        elif dest_clean:
+            match = dest_clean in t_dest
+
+        if match:
+            t["status"] = "CANCELLED"
+            cancelled_routes.append(f"{t.get('origin')} to {t.get('destination')}")
+            # Clean up Google Calendar event for this cancelled route
+            try:
+                from actions.google_auth import get_calendar_service
+                service = get_calendar_service(interactive=False)
+                if service:
+                    q_res = service.events().list(calendarId="primary", q=f"Flight Deal: {t.get('origin')} → {t.get('destination')}").execute()
+                    for old_item in q_res.get("items", []):
+                        service.events().delete(calendarId="primary", eventId=old_item["id"]).execute()
+            except Exception:
+                pass
+
+    if cancelled_routes:
         _save_data(data)
-        return f"Cancelled flight tracking for {origin} to {destination}, sir."
-    return f"No active flight tracking found for {origin} to {destination}, sir."
+        if len(cancelled_routes) == 1:
+            return f"Stopped flight tracking for {cancelled_routes[0]}, sir."
+        else:
+            return f"Stopped tracking for {len(cancelled_routes)} flight routes ({', '.join(cancelled_routes)}), sir."
+
+    return f"No active flight tracking found matching {origin} to {destination}, sir."
 
 
 def sync_active_trackers_to_calendar() -> str:
