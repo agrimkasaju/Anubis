@@ -106,9 +106,21 @@ def get_stock_analysis(symbol: str) -> str:
             data = response.json()
             analysis_text = data.get("analysis", "")
 
-            # Extract Final Operational Stance from Section 5
-            m = re.search(r"Final Operational Stance:\s*\*?([^\n*]+)", analysis_text)
-            final_stance = m.group(1).strip() if m else "NEUTRAL"
+            # Extract Final Operational Stance
+            m = re.search(
+                r"(?:Final Operational Stance|FINAL OPERATIONAL VERDICT|Operational Stance|Stance)\s*[:\*]+\s*\*?([A-Za-z -]+)",
+                analysis_text,
+                re.IGNORECASE
+            )
+            if m:
+                raw_stance = m.group(1).strip().upper()
+                final_stance = raw_stance.split()[0] if raw_stance else "NEUTRAL"
+            elif "BULLISH" in analysis_text.upper():
+                final_stance = "BULLISH"
+            elif "BEARISH" in analysis_text.upper():
+                final_stance = "BEARISH"
+            else:
+                final_stance = "NEUTRAL"
 
             local_summary = (data.get("news_summary") or "").strip()
             stance_line = ""
