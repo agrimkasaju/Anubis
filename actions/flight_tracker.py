@@ -495,20 +495,6 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
 
                 _send_desktop_notification(alert_title, alert_body)
 
-                # Sync price drop deal notification to Google Calendar
-                try:
-                    sync_price_drop_to_calendar(
-                        tracker=t,
-                        price=current_price,
-                        drop_amount=drop_amount,
-                        airline=current_airline,
-                        page_url=page_url,
-                        flight_options=outbound,
-                        returning_options=returning,
-                    )
-                except Exception as ce:
-                    print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
-
                 alert_info = {
                     "tracker_id": t_id,
                     "origin": t["origin"],
@@ -519,6 +505,21 @@ def poll_tracker(tracker: dict) -> Optional[dict]:
                     "airline": current_airline,
                     "spoken_alert": spoken_alert,
                 }
+
+            # Always sync latest verified fares to Google Calendar for today so the user sees active tracking status
+            try:
+                sync_price_drop_to_calendar(
+                    tracker=t,
+                    price=current_price,
+                    drop_amount=drop_amount if price_dropped else 0,
+                    airline=current_airline,
+                    page_url=page_url,
+                    flight_options=outbound,
+                    returning_options=returning,
+                )
+            except Exception as ce:
+                print(f"[FlightTracker] ⚠️ Calendar sync notice: {ce}")
+
             break
 
     _save_data(data)

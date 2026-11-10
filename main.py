@@ -1252,6 +1252,13 @@ class JarvisLive:
             http_options={"api_version": "v1beta"}
         )
 
+        # Launch persistent background services independent of Gemini Live reconnect cycles
+        try:
+            from services.flight_poller import get_poller_daemon
+            asyncio.create_task(get_poller_daemon().start())
+        except Exception as pe:
+            print(f"[FlightPoller] ⚠️ Could not initialize background poller: {pe}")
+
         while True:
             try:
                 print("[ORION] 🔌 Connecting...")
@@ -1277,8 +1284,6 @@ class JarvisLive:
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
                     tg.create_task(self._monitor_job_queue())
-                    from services.flight_poller import get_poller_daemon
-                    tg.create_task(get_poller_daemon().start())
                     
             except Exception as e:
                 print(f"[ORION] ⚠️ {e}")

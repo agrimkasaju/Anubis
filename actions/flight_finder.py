@@ -281,6 +281,16 @@ async def _wait_for_flight_cards(page, timeout: int = 30, label: str = "flights"
         )
         if reload_btn and await reload_btn.is_visible():
             reloads_clicked += 1
+            if reloads_clicked >= 2 and not hard_reload_done:
+                print(f"[FlightFinder] 🔄 Multiple reload button clicks encountered during {label}. Performing page reload...")
+                try:
+                    hard_reload_done = True
+                    await page.reload(wait_until="domcontentloaded")
+                    await asyncio.sleep(2.5)
+                    continue
+                except Exception as re:
+                    print(f"[FlightFinder] ⚠️ Page reload failed: {re}")
+
             print(f"[FlightFinder] 🔄 Detected 'Oops, something went wrong' banner during {label}. Auto-clicking Reload (attempt {reloads_clicked})...")
             try:
                 await reload_btn.click()
@@ -288,17 +298,6 @@ async def _wait_for_flight_cards(page, timeout: int = 30, label: str = "flights"
                 continue
             except Exception as e:
                 print(f"[FlightFinder] ⚠️ Error clicking reload: {e}")
-
-        # If stuck in error state or reload was clicked twice with no effect, try hard page reload
-        if reloads_clicked >= 2 and not hard_reload_done:
-            print(f"[FlightFinder] 🔄 Multiple reload clicks did not recover {label}. Performing page reload...")
-            try:
-                hard_reload_done = True
-                await page.reload(wait_until="domcontentloaded")
-                await asyncio.sleep(2.0)
-                continue
-            except Exception as re:
-                print(f"[FlightFinder] ⚠️ Page reload failed: {re}")
 
         # Check for genuine "No flights found" after giving at least 5 seconds
         if i >= 10:
