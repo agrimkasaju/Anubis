@@ -66,30 +66,45 @@ def ai_job_search_action(parameters: dict = None, player=None, speak=None) -> st
     title = parameters.get("title", "").strip()
     target = parameters.get("target", "all").strip().lower()
 
-    # Handle Google Calendar sync request (e.g. "add my applied job to google calendar")
-    if action in ("sync_calendar", "calendar_sync", "post_calendar") or "calendar" in action or parameters.get("sync_calendar"):
+    # Handle Google Calendar sync request (e.g. "add my applied job to google calendar", "sync jobs to calendar", "pull applied jobs")
+    if action in ("sync_calendar", "calendar_sync", "post_calendar", "push_calendar", "pull_calendar") or "calendar" in action or parameters.get("sync_calendar"):
+        is_pull = "pull" in action or parameters.get("pull")
         if player and hasattr(player, "write_log"):
-            player.write_log("[AI Job Search] Syncing applied & skipped jobs to Google Calendar...")
+            player.write_log(f"[AI Job Search] {'Pulling applied jobs from' if is_pull else 'Pushing applied jobs to'} Google Calendar...")
         try:
-            from actions.calendar_job_sync import sync_all_jobs_to_calendar
-            res = sync_all_jobs_to_calendar(target=target)
-            if res.get("status") == "success":
-                msg = res.get("message", "Job history synced to Google Calendar.")
-                if player and hasattr(player, "write_log"):
-                    player.write_log(f"[AI Job Search] ✅ {msg}")
-                new_cnt = res.get("synced_new", 0)
-                already_cnt = res.get("already_synced", 0)
-                return f"I have synced your jobs to Google Calendar, sir. {new_cnt} new postings were added, and {already_cnt} were already up to date."
+            if is_pull:
+                from actions.calendar_job_sync import pull_job_sync_from_calendar
+                res = pull_job_sync_from_calendar()
+                if res.get("status") == "success":
+                    added = res.get("new_keys_added", 0)
+                    total = res.get("total_applied_keys", 0)
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"[AI Job Search] ✅ Pulled {added} new jobs from calendar.")
+                    return f"I have synced your applied jobs from Google Calendar, sir. {added} new jobs were imported, bringing total tracked jobs to {total}."
+                else:
+                    err = res.get("message", "Calendar pull failed.")
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"[AI Job Search] ⚠️ {err}")
+                    return f"Sir, I was unable to pull jobs from Google Calendar: {err}"
             else:
-                err = res.get("message", "Calendar sync failed.")
-                if player and hasattr(player, "write_log"):
-                    player.write_log(f"[AI Job Search] ⚠️ {err}")
-                return f"Sir, I was unable to sync to Google Calendar: {err}"
+                from actions.calendar_job_sync import push_job_sync_to_calendar
+                res = push_job_sync_to_calendar()
+                if res.get("status") == "success":
+                    total = res.get("total_keys", 0)
+                    act = res.get("action", "updated")
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"[AI Job Search] ✅ {act.capitalize()} single sync event with {total} jobs.")
+                    return f"I have {act} the single Orion sync event on your Google Calendar, sir. It contains your {total} applied jobs in copy-pastable format."
+                else:
+                    err = res.get("message", "Calendar sync failed.")
+                    if player and hasattr(player, "write_log"):
+                        player.write_log(f"[AI Job Search] ⚠️ {err}")
+                    return f"Sir, I was unable to sync to Google Calendar: {err}"
         except Exception as e:
-            err_msg = f"Failed to sync jobs to Google Calendar: {e}"
+            err_msg = f"Failed to sync with Google Calendar: {e}"
             if player and hasattr(player, "write_log"):
                 player.write_log(f"[AI Job Search] ❌ {err_msg}")
-            return f"Sir, I encountered an error syncing your jobs to Google Calendar: {e}"
+            return f"Sir, I encountered an error interacting with Google Calendar: {e}"
 
     if player and hasattr(player, "write_log"):
         player.write_log("[AI Job Search] Pulling up browser dashboard...")

@@ -17,9 +17,23 @@ import {
   Sparkles,
   Inbox,
   Calendar,
+  Download,
+  Upload,
+  Copy,
+  Check,
+  Code2,
 } from 'lucide-react';
 import { JobHistoryItem } from '../types/orion';
-import { fetchJobHistory, removeJobHistory, reapplyJob, getJobPdfUrl, syncJobCalendar } from '../api/client';
+import {
+  fetchJobHistory,
+  removeJobHistory,
+  reapplyJob,
+  getJobPdfUrl,
+  syncJobCalendar,
+  pullJobCalendar,
+  fetchRawAppliedJobs,
+  importRawAppliedJobs,
+} from '../api/client';
 
 interface JobHistoryCardProps {
   onHistoryChange?: () => void;
@@ -35,12 +49,17 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
+  const [pullingCalendar, setPullingCalendar] = useState(false);
+  const [showJsonModal, setShowJsonModal] = useState(false);
+  const [rawJsonText, setRawJsonText] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [importingJson, setImportingJson] = useState(false);
 
-  const handleCalendarSync = async () => {
+  const handleCalendarPush = async () => {
     setSyncingCalendar(true);
     try {
-      const res = await syncJobCalendar('all');
-      setFeedback(res.message || 'Synced jobs to Google Calendar!');
+      const res = await syncJobCalendar();
+      setFeedback(res.message || 'Synced to single Google Calendar event!');
       setTimeout(() => setFeedback(null), 5000);
       await loadHistory();
     } catch (err: unknown) {
@@ -48,6 +67,60 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
       setTimeout(() => setFeedback(null), 4000);
     } finally {
       setSyncingCalendar(false);
+    }
+  };
+
+  const handleCalendarPull = async () => {
+    setPullingCalendar(true);
+    try {
+      const res = await pullJobCalendar();
+      setFeedback(res.message || 'Pulled applied jobs from Google Calendar event!');
+      setTimeout(() => setFeedback(null), 5000);
+      await loadHistory();
+      if (onHistoryChange) onHistoryChange();
+    } catch (err: unknown) {
+      setFeedback(err instanceof Error ? err.message : 'Calendar pull failed');
+      setTimeout(() => setFeedback(null), 4000);
+    } finally {
+      setPullingCalendar(false);
+    }
+  };
+
+  const handleOpenJsonModal = async () => {
+    setShowJsonModal(true);
+    try {
+      const data = await fetchRawAppliedJobs();
+      setRawJsonText(JSON.stringify(data.applied_keys, null, 2));
+    } catch {
+      setRawJsonText('[]');
+    }
+  };
+
+  const handleCopyJson = async () => {
+    try {
+      await navigator.clipboard.writeText(rawJsonText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback
+    }
+  };
+
+  const handleImportJson = async () => {
+    if (!rawJsonText.trim()) return;
+    setImportingJson(true);
+    try {
+      const res = await importRawAppliedJobs(rawJsonText);
+      setFeedback(res.message || 'Successfully imported applied jobs!');
+      setShowJsonModal(false);
+      await loadHistory();
+      if (onHistoryChange) onHistoryChange();
+      setTimeout(() => setFeedback(null), 4000);
+    } catch (err: unknown) {
+      setFeedback(err instanceof Error ? err.message : 'Import failed');
+      setTimeout(() => setFeedback(null), 4000);
+    } finally {
+      setImportingJson(false);
     }
   };
 
@@ -186,13 +259,34 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
             <div className="flex items-center space-x-1.5">
               <button
                 type="button"
-                onClick={handleCalendarSync}
-                disabled={syncingCalendar || loading}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-300 border border-sky-800/40 text-xs font-mono transition disabled:opacity-50"
-                title="Sync applied & skipped jobs to Google Calendar"
+                onClick={handleCalendarPush}
+                disabled={syncingCalendar || pullingCalendar || loading}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/40 text-xs font-mono transition disabled:opacity-50"
+                title="Push applied_jobs.json to single Google Calendar event in copy-pastable format"
               >
                 <Calendar className={`w-3.5 h-3.5 ${syncingCalendar ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">Sync Calendar</span>
+                <span className="hidden sm:inline">Push Cal</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCalendarPull}
+                disabled={syncingCalendar || pullingCalendar || loading}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-300 border border-sky-800/40 text-xs font-mono transition disabled:opacity-50"
+                title="Pull applied jobs from Google Calendar event and merge into UI"
+              >
+                <Download className={`w-3.5 h-3.5 ${pullingCalendar ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Pull Cal</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenJsonModal}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/40 text-xs font-mono transition"
+                title="View, copy, or paste applied_jobs.json"
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">JSON Sync</span>
               </button>
 
               <button
@@ -417,6 +511,77 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
               className="w-full flex-1 bg-white border-0"
               title="Archived PDF Viewer"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Copy / Paste JSON Sync Modal */}
+      {showJsonModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
+          onClick={() => setShowJsonModal(false)}
+        >
+          <div
+            className="nexus-glass rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden border border-cyan-500/40 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-sky-900/40 bg-slate-950/60">
+              <div className="flex items-center space-x-2 text-xs font-mono text-cyan-300">
+                <Code2 className="w-4 h-4" />
+                <span>APPLIED_JOBS.JSON SYNC & COPY</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowJsonModal(false)}
+                className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col space-y-3 flex-1 overflow-hidden">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Copy this JSON array to paste into your server’s <code className="text-cyan-400 font-mono">applied_jobs.json</code>, or paste in keys from your server and click <strong className="text-emerald-400">Import & Sync UI</strong> to update Orion.
+              </p>
+
+              <textarea
+                value={rawJsonText}
+                onChange={(e) => setRawJsonText(e.target.value)}
+                rows={12}
+                className="w-full font-mono text-xs p-3 rounded-xl bg-slate-950 border border-sky-900/50 text-cyan-300 focus:outline-none focus:border-cyan-400/80 resize-none overflow-y-auto"
+                placeholder='["stripe_software_engineer_intern", ...]'
+              />
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={handleCopyJson}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-cyan-950/70 hover:bg-cyan-900/70 text-cyan-300 border border-cyan-500/40 text-xs font-mono transition"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copied ? 'Copied to Clipboard!' : 'Copy JSON'}</span>
+                </button>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowJsonModal(false)}
+                    className="px-3 py-1.5 rounded-lg bg-slate-900 text-slate-400 hover:text-slate-200 text-xs font-mono transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportJson}
+                    disabled={importingJson || !rawJsonText.trim()}
+                    className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-bold transition disabled:opacity-50"
+                  >
+                    <Upload className={`w-3.5 h-3.5 ${importingJson ? 'animate-spin' : ''}`} />
+                    <span>Import & Sync UI</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -1514,6 +1514,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._send_json(history)
             return
 
+        # API: Get Raw applied_jobs.json payload for copy-pasting
+        if path == "/api/job/applied_raw":
+            from job_history import APPLIED_FILE, _load_json
+            applied_keys = _load_json(APPLIED_FILE, [])
+            clean_keys = [k if isinstance(k, str) else k.get("job_key") for k in applied_keys if k]
+            self._send_json({"applied_keys": clean_keys, "count": len(clean_keys)})
+            return
+
         # API: Serve / Download Generated Job Application PDFs
         if path == "/api/job/pdf":
             req_file = qs.get("file", [""])[0].strip()
@@ -1918,13 +1926,40 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 })
             return
 
-        # API: Sync Job History to Google Calendar
+        # API: Sync Job History to Google Calendar (Single Sync Event)
         if path == "/api/job/calendar/sync":
-            target = body.get("target", "all").strip().lower()
-            force = bool(body.get("force", False))
             try:
-                from actions.calendar_job_sync import sync_all_jobs_to_calendar
-                res = sync_all_jobs_to_calendar(target=target, force=force)
+                from actions.calendar_job_sync import push_job_sync_to_calendar
+                res = push_job_sync_to_calendar()
+                self._send_json(res)
+            except Exception as e:
+                self._send_json({"status": "error", "message": str(e)}, status=500)
+            return
+
+        # API: Pull Job History from Google Calendar (Single Sync Event)
+        if path == "/api/job/calendar/pull":
+            try:
+                from actions.calendar_job_sync import pull_job_sync_from_calendar
+                res = pull_job_sync_from_calendar()
+                self._send_json(res)
+            except Exception as e:
+                self._send_json({"status": "error", "message": str(e)}, status=500)
+            return
+
+        # API: Direct Import / Paste of applied_jobs.json
+        if path == "/api/job/applied_raw":
+            raw_input = body.get("keys") or body.get("applied_keys") or body.get("content")
+            if isinstance(raw_input, str):
+                try:
+                    raw_input = json.loads(raw_input)
+                except Exception:
+                    raw_input = [x.strip() for x in raw_input.splitlines() if x.strip()]
+            if not isinstance(raw_input, list):
+                self._send_json({"error": "Invalid payload. Expected a JSON list of job keys."}, status=400)
+                return
+            try:
+                from actions.calendar_job_sync import import_applied_keys
+                res = import_applied_keys(raw_input)
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"status": "error", "message": str(e)}, status=500)

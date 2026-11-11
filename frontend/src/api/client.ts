@@ -151,21 +151,66 @@ export async function reapplyJob(job: {
   return res.json();
 }
 
-export async function syncJobCalendar(target: string = 'all', force: boolean = false): Promise<{
+export async function syncJobCalendar(): Promise<{
   status: string;
-  synced_new: number;
-  synced_applied: number;
-  synced_skipped: number;
-  already_synced: number;
+  action?: string;
+  total_keys?: number;
   message?: string;
+  html_link?: string;
 }> {
   const token = getStoredToken();
   const url = token ? `/api/job/calendar/sync?token=${encodeURIComponent(token)}` : '/api/job/calendar/sync';
   const res = await fetch(url, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ target, force }),
   });
   if (!res.ok) throw new Error(`Failed to sync calendar: ${res.statusText}`);
+  return res.json();
+}
+
+export async function pullJobCalendar(): Promise<{
+  status: string;
+  new_keys_added?: number;
+  total_applied_keys?: number;
+  new_history_entries?: number;
+  message?: string;
+}> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/calendar/pull?token=${encodeURIComponent(token)}` : '/api/job/calendar/pull';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to pull calendar sync: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchRawAppliedJobs(): Promise<{
+  applied_keys: string[];
+  count: number;
+}> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/applied_raw?token=${encodeURIComponent(token)}` : '/api/job/applied_raw';
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch applied jobs: ${res.statusText}`);
+  return res.json();
+}
+
+export async function importRawAppliedJobs(keys: string[] | string): Promise<{
+  status: string;
+  new_keys_added?: number;
+  total_applied_keys?: number;
+  message?: string;
+}> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/applied_raw?token=${encodeURIComponent(token)}` : '/api/job/applied_raw';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ keys }),
+  });
+  if (!res.ok) throw new Error(`Failed to import applied jobs: ${res.statusText}`);
   return res.json();
 }
