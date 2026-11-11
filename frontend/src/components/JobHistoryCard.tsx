@@ -212,57 +212,24 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
     <>
       <section className="nexus-glass rounded-2xl p-4 md:p-5 flex flex-col space-y-4">
         {/* Header & Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-sky-900/30 gap-2.5">
-          <div className="flex items-center space-x-2">
-            <History className="w-4 h-4 text-cyan-400" />
-            <h2 className="text-xs md:text-sm font-bold font-mono tracking-wider text-slate-200 uppercase">
-              Job Queue & History
-            </h2>
-          </div>
-
-          {/* Tab Selector & Refresh */}
-          <div className="flex items-center space-x-2">
-            <div className="flex items-center p-0.5 rounded-xl bg-slate-950/80 border border-sky-900/40 font-mono text-[11px]">
-              <button
-                type="button"
-                onClick={() => setActiveTab('applied')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg transition ${
-                  activeTab === 'applied'
-                    ? 'bg-cyan-950/70 text-cyan-300 font-bold border border-cyan-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                <span>Recently Applied</span>
-                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
-                  {appliedJobs.length}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab('skipped')}
-                className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg transition ${
-                  activeTab === 'skipped'
-                    ? 'bg-amber-950/70 text-amber-300 font-bold border border-amber-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <SkipForward className="w-3 h-3 text-amber-400" />
-                <span>Skipped Jobs</span>
-                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-amber-950/60 text-amber-300 border border-amber-500/30">
-                  {skippedJobs.length}
-                </span>
-              </button>
+        <div className="flex flex-col space-y-3 pb-3 border-b border-sky-900/30">
+          {/* Top Row: Title + Quick Action Utility Buttons */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-2 min-w-0">
+              <History className="w-4 h-4 text-cyan-400 shrink-0" />
+              <h2 className="text-xs md:text-sm font-bold font-mono tracking-wider text-slate-200 uppercase truncate">
+                Job Queue & History
+              </h2>
             </div>
 
-            <div className="flex items-center space-x-1.5">
+            {/* Quick Action Buttons */}
+            <div className="flex items-center space-x-1.5 shrink-0">
               <button
                 type="button"
                 onClick={handleCalendarPush}
                 disabled={syncingCalendar || pullingCalendar || loading}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/40 text-xs font-mono transition disabled:opacity-50"
-                title="Push applied_jobs.json to single Google Calendar event in copy-pastable format"
+                className="flex items-center space-x-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-800/40 text-xs font-mono transition disabled:opacity-50"
+                title="Push applied_jobs.json to Google Calendar event in copy-pastable format"
               >
                 <Calendar className={`w-3.5 h-3.5 ${syncingCalendar ? 'animate-spin' : ''}`} />
                 <span className="hidden sm:inline">Push Cal</span>
@@ -272,7 +239,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                 type="button"
                 onClick={handleCalendarPull}
                 disabled={syncingCalendar || pullingCalendar || loading}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-300 border border-sky-800/40 text-xs font-mono transition disabled:opacity-50"
+                className="flex items-center space-x-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-300 border border-sky-800/40 text-xs font-mono transition disabled:opacity-50"
                 title="Pull applied jobs from Google Calendar event and merge into UI"
               >
                 <Download className={`w-3.5 h-3.5 ${pullingCalendar ? 'animate-spin' : ''}`} />
@@ -282,7 +249,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
               <button
                 type="button"
                 onClick={handleOpenJsonModal}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/40 text-xs font-mono transition"
+                className="flex items-center space-x-1 p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-800/40 text-xs font-mono transition"
                 title="View, copy, or paste applied_jobs.json"
               >
                 <Code2 className="w-3.5 h-3.5" />
@@ -299,6 +266,41 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
               </button>
             </div>
+          </div>
+
+          {/* Bottom Row: Tab Selector (Full width, responsive) */}
+          <div className="flex items-center p-0.5 rounded-xl bg-slate-950/80 border border-sky-900/40 font-mono text-[11px] w-full">
+            <button
+              type="button"
+              onClick={() => setActiveTab('applied')}
+              className={`flex-1 flex items-center justify-center space-x-1 px-2.5 py-1.5 rounded-lg transition whitespace-nowrap ${
+                activeTab === 'applied'
+                  ? 'bg-cyan-950/70 text-cyan-300 font-bold border border-cyan-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span>Recently Applied</span>
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
+                {appliedJobs.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('skipped')}
+              className={`flex-1 flex items-center justify-center space-x-1 px-2.5 py-1.5 rounded-lg transition whitespace-nowrap ${
+                activeTab === 'skipped'
+                  ? 'bg-amber-950/70 text-amber-300 font-bold border border-amber-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <SkipForward className="w-3 h-3 text-amber-400 shrink-0" />
+              <span>Skipped Jobs</span>
+              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-amber-950/60 text-amber-300 border border-amber-500/30">
+                {skippedJobs.length}
+              </span>
+            </button>
           </div>
         </div>
 
