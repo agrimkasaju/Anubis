@@ -64,6 +64,32 @@ def ai_job_search_action(parameters: dict = None, player=None, speak=None) -> st
     url = parameters.get("url", "").strip()
     company = parameters.get("company", "").strip()
     title = parameters.get("title", "").strip()
+    target = parameters.get("target", "all").strip().lower()
+
+    # Handle Google Calendar sync request (e.g. "add my applied job to google calendar")
+    if action in ("sync_calendar", "calendar_sync", "post_calendar") or "calendar" in action or parameters.get("sync_calendar"):
+        if player and hasattr(player, "write_log"):
+            player.write_log("[AI Job Search] Syncing applied & skipped jobs to Google Calendar...")
+        try:
+            from actions.calendar_job_sync import sync_all_jobs_to_calendar
+            res = sync_all_jobs_to_calendar(target=target)
+            if res.get("status") == "success":
+                msg = res.get("message", "Job history synced to Google Calendar.")
+                if player and hasattr(player, "write_log"):
+                    player.write_log(f"[AI Job Search] ✅ {msg}")
+                new_cnt = res.get("synced_new", 0)
+                already_cnt = res.get("already_synced", 0)
+                return f"I have synced your jobs to Google Calendar, sir. {new_cnt} new postings were added, and {already_cnt} were already up to date."
+            else:
+                err = res.get("message", "Calendar sync failed.")
+                if player and hasattr(player, "write_log"):
+                    player.write_log(f"[AI Job Search] ⚠️ {err}")
+                return f"Sir, I was unable to sync to Google Calendar: {err}"
+        except Exception as e:
+            err_msg = f"Failed to sync jobs to Google Calendar: {e}"
+            if player and hasattr(player, "write_log"):
+                player.write_log(f"[AI Job Search] ❌ {err_msg}")
+            return f"Sir, I encountered an error syncing your jobs to Google Calendar: {e}"
 
     if player and hasattr(player, "write_log"):
         player.write_log("[AI Job Search] Pulling up browser dashboard...")

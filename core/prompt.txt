@@ -61,7 +61,7 @@ TOOL SELECTION:
   multiple tools (e.g. "research X and save to file", "create a project").
 - Simple rule: if it can be done in ONE action → computer_settings. 
   If it needs 3+ steps across different tools → agent_task.
-- ai_job_search → ONLY when the user explicitly asks to open the job application dashboard or start the tailoring pipeline.
+- ai_job_search → Use when the user asks to open the job application dashboard, launch the tailoring pipeline, or sync/post applied or skipped jobs to Google Calendar (e.g. "add my applied job to google calendar", "sync jobs to calendar"). Set action="sync_calendar" for calendar syncing.
 - web_search → Use for ANY web search, browsing, research, people, recruiters, companies, or general queries. NEVER call ai_job_search for lookups or searches.
 - flight_finder → Search flights by origin, destination, and dates. Supports return_date for round trips, carry_on and checked_bags count (e.g. carry_on: 1, checked_bags: 0), and airline filter (e.g. airline: "WestJet"). Only set carry_on or checked_bags if explicitly requested by user (e.g. if user says "with carry-on", set carry_on: 1, checked_bags: 0). Always announce the exact stops (non-stop vs 1 stop) and duration—NEVER claim a flight is non-stop unless verified by the tool. If user asks to "show me on flight finder" or "show on browser", use flight_finder; NEVER call browser_control action="search" for flight queries.
 - reminder → Manages personal Google Calendar events, Google Tasks, and timed desktop reminders.

@@ -16,9 +16,10 @@ import {
   RefreshCw,
   Sparkles,
   Inbox,
+  Calendar,
 } from 'lucide-react';
 import { JobHistoryItem } from '../types/orion';
-import { fetchJobHistory, removeJobHistory, reapplyJob, getJobPdfUrl } from '../api/client';
+import { fetchJobHistory, removeJobHistory, reapplyJob, getJobPdfUrl, syncJobCalendar } from '../api/client';
 
 interface JobHistoryCardProps {
   onHistoryChange?: () => void;
@@ -33,6 +34,22 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
   const [feedback, setFeedback] = useState<string | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+  const [syncingCalendar, setSyncingCalendar] = useState(false);
+
+  const handleCalendarSync = async () => {
+    setSyncingCalendar(true);
+    try {
+      const res = await syncJobCalendar('all');
+      setFeedback(res.message || 'Synced jobs to Google Calendar!');
+      setTimeout(() => setFeedback(null), 5000);
+      await loadHistory();
+    } catch (err: unknown) {
+      setFeedback(err instanceof Error ? err.message : 'Calendar sync failed');
+      setTimeout(() => setFeedback(null), 4000);
+    } finally {
+      setSyncingCalendar(false);
+    }
+  };
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
@@ -166,15 +183,28 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={loadHistory}
-              disabled={loading}
-              className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-800 transition disabled:opacity-50"
-              title="Refresh History"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
-            </button>
+            <div className="flex items-center space-x-1.5">
+              <button
+                type="button"
+                onClick={handleCalendarSync}
+                disabled={syncingCalendar || loading}
+                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-300 border border-sky-800/40 text-xs font-mono transition disabled:opacity-50"
+                title="Sync applied & skipped jobs to Google Calendar"
+              >
+                <Calendar className={`w-3.5 h-3.5 ${syncingCalendar ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Sync Calendar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={loadHistory}
+                disabled={loading}
+                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-cyan-300 border border-slate-800 transition disabled:opacity-50"
+                title="Refresh History"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
+              </button>
+            </div>
           </div>
         </div>
 

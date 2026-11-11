@@ -1918,6 +1918,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 })
             return
 
+        # API: Sync Job History to Google Calendar
+        if path == "/api/job/calendar/sync":
+            target = body.get("target", "all").strip().lower()
+            force = bool(body.get("force", False))
+            try:
+                from actions.calendar_job_sync import sync_all_jobs_to_calendar
+                res = sync_all_jobs_to_calendar(target=target, force=force)
+                self._send_json(res)
+            except Exception as e:
+                self._send_json({"status": "error", "message": str(e)}, status=500)
+            return
+
         # API: Stop Headless Job Search Pipeline
         if path == "/api/job/stop":
             status_file = Path.home() / ".orion_job_status.json"

@@ -150,3 +150,22 @@ export async function reapplyJob(job: {
   if (!res.ok) throw new Error(`Failed to reapply job: ${res.statusText}`);
   return res.json();
 }
+
+export async function syncJobCalendar(target: string = 'all', force: boolean = false): Promise<{
+  status: string;
+  synced_new: number;
+  synced_applied: number;
+  synced_skipped: number;
+  already_synced: number;
+  message?: string;
+}> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/calendar/sync?token=${encodeURIComponent(token)}` : '/api/job/calendar/sync';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ target, force }),
+  });
+  if (!res.ok) throw new Error(`Failed to sync calendar: ${res.statusText}`);
+  return res.json();
+}

@@ -114,6 +114,34 @@ def record_job_history(job_data: dict, status: str = "applied") -> dict:
         applied_list.append(job_key)
         _save_json(APPLIED_FILE, applied_list)
 
+    # Automatically post newly recorded job to Google Calendar in background thread
+    try:
+        import threading
+        from actions.calendar_job_sync import post_single_job_to_calendar
+
+        def _bg_sync(target_entry: dict):
+            try:
+                ok, _, evt_id = post_single_job_to_calendar(target_entry)
+                if ok and evt_id:
+                    target_entry["calendar_synced"] = True
+                    target_entry["calendar_event_id"] = evt_id
+                    target_entry["calendar_synced_at"] = datetime.now(timezone.utc).isoformat()
+                    # Persist event ID to history file
+                    current_hist = _load_json(HISTORY_FILE, [])
+                    for h in current_hist:
+                        if h.get("job_key") == target_entry.get("job_key"):
+                            h["calendar_synced"] = True
+                            h["calendar_event_id"] = evt_id
+                            h["calendar_synced_at"] = target_entry["calendar_synced_at"]
+                            break
+                    _save_json(HISTORY_FILE, current_hist)
+            except Exception:
+                pass
+
+        threading.Thread(target=_bg_sync, args=(entry,), daemon=True).start()
+    except Exception:
+        pass
+
     return entry
 
 
