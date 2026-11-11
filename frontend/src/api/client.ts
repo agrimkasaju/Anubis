@@ -35,6 +35,8 @@ export async function fetchPipelineStatus(): Promise<PipelineStatus> {
 export async function startPipeline(payload: {
   mode: 'scrape' | 'manual';
   seasons?: string;
+  locations?: string;
+  roles?: string;
   url?: string;
   company?: string;
   title?: string;

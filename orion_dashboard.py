@@ -257,15 +257,38 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             Scrapes fresh unapplied postings from Simplify (30-min feed), drafts tailored CV & Cover Letters in the background, and queues them above for review.
           </p>
 
-          <div class="space-y-1">
-            <label class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Target Season</label>
-            <select id="select-job-seasons" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-cyan-500">
-              <option value="all">All Seasons (Fall, Winter, Summer)</option>
-              <option value="summer">Summer Only</option>
-              <option value="winter">Winter Only</option>
-              <option value="fall">Fall Only</option>
-              <option value="fall,winter">Fall & Winter (Off-Cycle)</option>
-            </select>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div class="space-y-1">
+              <label class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Season</label>
+              <select id="select-job-seasons" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-cyan-500">
+                <option value="all">All Seasons</option>
+                <option value="summer">Summer Only</option>
+                <option value="winter">Winter Only</option>
+                <option value="fall">Fall Only</option>
+                <option value="fall,winter">Fall & Winter</option>
+              </select>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Location</label>
+              <select id="select-job-locations" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-cyan-500">
+                <option value="all">All Locations</option>
+                <option value="canada">Canada Only</option>
+                <option value="us">United States Only</option>
+                <option value="canada,us">Canada & US</option>
+                <option value="remote">Remote Only</option>
+              </select>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Role Domain</label>
+              <select id="select-job-roles" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-cyan-500">
+                <option value="all">All Tech Roles</option>
+                <option value="software">Software / SWE</option>
+                <option value="hardware">Hardware / Firmware</option>
+                <option value="ai">AI / ML / Data</option>
+              </select>
+            </div>
           </div>
 
           <button onclick="startPipeline('scrape')" class="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-white font-semibold rounded-xl text-sm transition shadow-lg shadow-cyan-950/30">
@@ -488,6 +511,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const seasonEl = document.getElementById('select-job-seasons');
         if (seasonEl) {
           payload.seasons = seasonEl.value;
+        }
+        const locEl = document.getElementById('select-job-locations');
+        if (locEl) {
+          payload.locations = locEl.value;
+        }
+        const roleEl = document.getElementById('select-job-roles');
+        if (roleEl) {
+          payload.roles = roleEl.value;
         }
       }
 
@@ -1217,7 +1248,15 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     return bytes(pdf.output())
 
 
-def launch_job_pipeline(mode: str = "scrape", url: str = "", company: str = "", title: str = "", seasons: str = "all") -> tuple[bool, int | None, str]:
+def launch_job_pipeline(
+    mode: str = "scrape",
+    url: str = "",
+    company: str = "",
+    title: str = "",
+    seasons: str = "all",
+    locations: str = "all",
+    roles: str = "all",
+) -> tuple[bool, int | None, str]:
     """Helper to start the headless job search pipeline in background with proper environment."""
     python_bin = "/home/grim/Downloads/ai_job_search/.venv/bin/python"
     script_path = "/home/grim/Downloads/ai_job_search/ai_job_search/framework/headless.py"
@@ -1229,8 +1268,13 @@ def launch_job_pipeline(mode: str = "scrape", url: str = "", company: str = "", 
             cmd.extend(["--company", company])
         if title:
             cmd.extend(["--title", title])
-    elif mode == "scrape" and seasons and seasons != "all":
-        cmd.extend(["--seasons", seasons])
+    elif mode == "scrape":
+        if seasons and seasons != "all":
+            cmd.extend(["--seasons", seasons])
+        if locations and locations != "all":
+            cmd.extend(["--locations", locations])
+        if roles and roles != "all":
+            cmd.extend(["--roles", roles])
 
     env = os.environ.copy()
     job_env_file = Path("/home/grim/Downloads/ai_job_search/.env")
@@ -1817,8 +1861,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             company = body.get("company", "").strip()
             title = body.get("title", "").strip()
             seasons = body.get("seasons", "all").strip()
+            locations = body.get("locations", "all").strip()
+            roles = body.get("roles", "all").strip()
 
-            success, pid, msg = launch_job_pipeline(mode=mode, url=url, company=company, title=title, seasons=seasons)
+            success, pid, msg = launch_job_pipeline(
+                mode=mode,
+                url=url,
+                company=company,
+                title=title,
+                seasons=seasons,
+                locations=locations,
+                roles=roles,
+            )
             if success:
                 self._send_json({"status": "started", "pid": pid, "message": msg})
             else:

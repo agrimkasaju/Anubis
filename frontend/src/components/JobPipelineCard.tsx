@@ -14,6 +14,8 @@ export const JobPipelineCard: React.FC<JobPipelineCardProps> = ({
 }) => {
   const [mode, setMode] = useState<'scrape' | 'manual'>('scrape');
   const [seasons, setSeasons] = useState('all');
+  const [locations, setLocations] = useState('all');
+  const [roles, setRoles] = useState('all');
   const [url, setUrl] = useState('');
   const [company, setCompany] = useState('');
   const [title, setTitle] = useState('');
@@ -34,6 +36,8 @@ export const JobPipelineCard: React.FC<JobPipelineCardProps> = ({
       await startPipeline({
         mode,
         seasons: mode === 'scrape' ? seasons : undefined,
+        locations: mode === 'scrape' ? locations : undefined,
+        roles: mode === 'scrape' ? roles : undefined,
         url: mode === 'manual' ? url.trim() : undefined,
         company: mode === 'manual' ? company.trim() : undefined,
         title: mode === 'manual' ? title.trim() : undefined,
@@ -119,21 +123,56 @@ export const JobPipelineCard: React.FC<JobPipelineCardProps> = ({
             Headlessly scans Simplify 30-min feeds, applies semantic filters, drafts tailored CV & letters, and bridges them for review.
           </p>
 
-          <div className="space-y-1">
-            <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
-              Target Season
-            </label>
-            <select
-              value={seasons}
-              onChange={(e) => setSeasons(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-950 border border-sky-900/40 rounded-xl text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
-            >
-              <option value="all">All Seasons (Fall, Winter, Summer)</option>
-              <option value="summer">Summer Only</option>
-              <option value="winter">Winter Only</option>
-              <option value="fall">Fall Only</option>
-              <option value="fall,winter">Fall & Winter (Off-Cycle)</option>
-            </select>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                Season
+              </label>
+              <select
+                value={seasons}
+                onChange={(e) => setSeasons(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-950 border border-sky-900/40 rounded-xl text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="all">All Seasons</option>
+                <option value="summer">Summer Only</option>
+                <option value="winter">Winter Only</option>
+                <option value="fall">Fall Only</option>
+                <option value="fall,winter">Fall & Winter</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                Location
+              </label>
+              <select
+                value={locations}
+                onChange={(e) => setLocations(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-950 border border-sky-900/40 rounded-xl text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="all">All Locations</option>
+                <option value="canada">Canada Only</option>
+                <option value="us">United States Only</option>
+                <option value="canada,us">Canada & US</option>
+                <option value="remote">Remote Only</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono uppercase tracking-wider text-slate-400">
+                Role Domain
+              </label>
+              <select
+                value={roles}
+                onChange={(e) => setRoles(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-950 border border-sky-900/40 rounded-xl text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
+              >
+                <option value="all">All Tech Roles</option>
+                <option value="software">Software / SWE</option>
+                <option value="hardware">Hardware / Firmware</option>
+                <option value="ai">AI / ML / Data</option>
+              </select>
+            </div>
           </div>
 
           <button
