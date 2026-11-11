@@ -24,7 +24,10 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from actions.google_auth import get_calendar_service
+try:
+    from actions.google_auth import get_calendar_service
+except Exception:
+    get_calendar_service = lambda interactive=False: None
 from job_history import (
     HISTORY_FILE,
     APPLIED_FILE,
