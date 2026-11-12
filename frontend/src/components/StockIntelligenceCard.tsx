@@ -217,8 +217,9 @@ export const StockIntelligenceCard: React.FC = () => {
               )}
 
               {stockData.news_call && (
-                <div className="text-[11px] font-mono text-slate-400 border-t border-sky-950 pt-1.5">
-                  News Catalyst: <span className="text-slate-300">{stockData.news_call}</span>
+                <div className="text-[11px] font-mono text-slate-400 border-t border-sky-950 pt-1.5 whitespace-pre-wrap leading-relaxed">
+                  <span className="text-amber-400/90 font-bold block mb-1">Catalysts &amp; News Digest:</span>
+                  <span className="text-slate-300">{stockData.news_call}</span>
                 </div>
               )}
             </div>
