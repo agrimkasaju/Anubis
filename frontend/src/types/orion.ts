@@ -29,7 +29,14 @@ export interface PipelineStatus {
 
 export interface StockData {
   symbol: string;
-  stance: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'INVALID';
+  stance: string;
+  composite_score?: number | null;
+  rsi_14?: number | null;
+  drawdown_2w_pct?: number | null;
+  exhaustion_label?: string;
+  fundamentals?: any;
+  qwen_synthesis?: any;
+  ensemble?: any;
   price: number | null;
   range: string;
   news_call: string;

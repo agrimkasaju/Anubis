@@ -169,15 +169,24 @@ export const StockIntelligenceCard: React.FC = () => {
                 <div className="flex items-center space-x-2">
                   <span
                     className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold uppercase tracking-wider border ${
-                      stockData.stance === 'BULLISH'
+                      stockData.stance.includes('ACCUMULATE')
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
+                        : stockData.stance.includes('BULLISH') || stockData.stance.includes('MOMENTUM')
                         ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                        : stockData.stance === 'BEARISH'
+                        : stockData.stance.includes('REVERSAL')
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : stockData.stance.includes('BEARISH') || stockData.stance.includes('BREAKDOWN')
                         ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-slate-500/20 text-slate-300 border-slate-500/40'
                     }`}
                   >
                     {stockData.stance}
                   </span>
+                  {stockData.composite_score !== undefined && stockData.composite_score !== null && (
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-cyan-950/70 text-cyan-300 border border-cyan-500/40">
+                      SCORE: {stockData.composite_score.toFixed(1)}/100
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={handleDownloadPdf}

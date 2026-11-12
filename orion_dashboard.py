@@ -1123,11 +1123,18 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     if not data or "error" in data:
         return None
 
+    def clean_pdf_text(text: str) -> str:
+        if not text:
+            return ""
+        no_emoji = re.sub(r'[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\u2300-\u23ff]|[\ufe00-\ufe0f]', '', text)
+        no_md = re.sub(r"\*\*", "", no_emoji)
+        return no_md.encode("latin-1", "replace").decode("latin-1")
+
     class StockReportPDF(FPDF):
         def header(self):
             self.set_font("Helvetica", "B", 8)
             self.set_text_color(100, 116, 139)
-            self.cell(0, 6, "QUANTITATIVE EQUITY RESEARCH REPORT", align="L")
+            self.cell(0, 6, "QUANTITATIVE & FUNDAMENTAL INSTITUTIONAL REPORT", align="L")
             self.set_font("Helvetica", "", 8)
             self.cell(0, 6, "PUBLIC MARKET DATA", align="R")
             self.ln(7)
@@ -1146,36 +1153,60 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     # Title
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(15, 23, 42)
-    pdf.cell(0, 9, f"{symbol} - Technical & Quantitative Analysis", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 9, f"{symbol} - Multi-Factor Quantitative & Fundamental Analysis", new_x="LMARGIN", new_y="NEXT")
 
     # Date / Timestamp
-    ts = data.get("timestamp_str") or ""
+    ts = data.get("timestamp_str") or datetime.now().strftime("%b %d, %Y - %H:%M")
     if ts:
         pdf.set_font("Helvetica", "", 8.5)
         pdf.set_text_color(100, 116, 139)
         pdf.cell(0, 5, f"Evaluation Date: {ts}", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
-    # Stance & Metrics
-    analysis_text = data.get("analysis", "")
-    is_bull = "BULLISH" in analysis_text
-    is_bear = "BEARISH" in analysis_text
-    stance = "BULLISH" if is_bull else ("BEARISH" if is_bear else "NEUTRAL")
+    # Stance & Metrics extraction
+    raw_stance = data.get("stance") or ""
+    if not raw_stance and data.get("ensemble"):
+        raw_stance = data["ensemble"].get("stance", "")
+    if not raw_stance:
+        analysis_text = data.get("analysis", "")
+        if "ACCUMULATE" in analysis_text:
+            raw_stance = "ACCUMULATE (DIP-BUY)"
+        elif "MOMENTUM" in analysis_text or "BULLISH" in analysis_text:
+            raw_stance = "BULLISH (MOMENTUM)"
+        elif "REVERSAL" in analysis_text:
+            raw_stance = "SPECULATIVE (REVERSAL)"
+        elif "BEARISH" in analysis_text:
+            raw_stance = "BEARISH (BREAKDOWN)"
+        else:
+            raw_stance = "NEUTRAL (CONSOLIDATION)"
 
-    pdf.set_font("Helvetica", "B", 11)
-    if stance == "BULLISH":
+    clean_stance = clean_pdf_text(raw_stance).strip()
+
+    pdf.set_font("Helvetica", "B", 10.5)
+    if "ACCUMULATE" in clean_stance:
+        pdf.set_fill_color(209, 250, 229)
+        pdf.set_text_color(6, 95, 70)
+    elif "BULLISH" in clean_stance or "MOMENTUM" in clean_stance:
         pdf.set_fill_color(220, 252, 231)
         pdf.set_text_color(22, 101, 52)
-    elif stance == "BEARISH":
+    elif "SPECULATIVE" in clean_stance or "REVERSAL" in clean_stance:
+        pdf.set_fill_color(254, 243, 199)
+        pdf.set_text_color(180, 83, 9)
+    elif "BEARISH" in clean_stance or "BREAKDOWN" in clean_stance:
         pdf.set_fill_color(254, 226, 226)
         pdf.set_text_color(153, 27, 27)
     else:
-        pdf.set_fill_color(254, 243, 199)
-        pdf.set_text_color(146, 64, 14)
+        pdf.set_fill_color(241, 245, 249)
+        pdf.set_text_color(71, 85, 105)
 
-    pdf.cell(40, 8, f"  STANCE: {stance}  ", fill=True, border=1)
+    comp_score = data.get("composite_score")
+    if comp_score is None and data.get("ensemble"):
+        comp_score = data["ensemble"].get("composite_score")
+    comp_str = f" | SCORE: {comp_score:.1f}/100" if comp_score is not None else ""
+
+    pdf.cell(80, 8, f"  STANCE: {clean_stance}{comp_str}  ", fill=True, border=1)
     
-    pdf.set_font("Helvetica", "", 9.5)
+    pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(30, 41, 59)
     price = data.get("current_price", 0)
     session = data.get("market_session", "Regular")
@@ -1200,6 +1231,29 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
         pdf.cell(0, 5, f"   Overnight Broad-Market Futures: {fut_str}", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
     pdf.ln(3)
+
+    # Net Loss Inflection & Fundamental Matrix Callout Box
+    fund = data.get("fundamentals") or {}
+    qwen = data.get("qwen_synthesis") or {}
+    if fund or qwen:
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_fill_color(248, 250, 252)
+        pdf.set_text_color(15, 23, 42)
+        pdf.cell(0, 6, "Fundamental Health & Net Loss Inflection Forecast:", fill=True, border="T", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(51, 65, 85)
+
+        yoy = f"{fund.get('revenue_yoy_growth_pct', 0):+.1f}%" if fund.get("revenue_yoy_growth_pct") is not None else "N/A"
+        gm = f"{fund.get('gross_margin_pct', 0):.1f}%" if fund.get("gross_margin_pct") is not None else "N/A"
+        regime = qwen.get("earnings_quality_regime") or ("CAPEX_INFRASTRUCTURE_SCALING" if fund.get("capex_expansion_flag") else "PROFITABLE_GROWTH")
+        loss_traj = qwen.get("predicted_next_q_loss_trajectory") or "STABLE"
+        dip_legit = qwen.get("dip_buying_legitimacy") or "SPECULATIVE_BOUNCE"
+
+        fund_line_1 = f"• Revenue Velocity: {yoy} YoY | Gross Margin: {gm} | Quality Regime: {regime}"
+        fund_line_2 = f"• Forward Net Loss Trajectory: {loss_traj} | Dip-Buy Legitimacy: {dip_legit}"
+        pdf.cell(0, 4.5, clean_pdf_text(fund_line_1), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 4.5, clean_pdf_text(fund_line_2), new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
 
     # Candlestick Chart
     chart_file = f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart.png"
@@ -1668,9 +1722,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     if not t:
                         continue
                     an = item.get("analysis") or ""
-                    is_bull = "BULLISH" in an
-                    is_bear = "BEARISH" in an
-                    st = "BULLISH" if is_bull else "BEARISH" if is_bear else "NEUTRAL"
+                    st = item.get("stance") or (item.get("ensemble") or {}).get("stance")
+                    if not st:
+                        is_bull = "BULLISH" in an
+                        is_bear = "BEARISH" in an
+                        st = "BULLISH" if is_bull else "BEARISH" if is_bear else "NEUTRAL"
                     low = item.get("two_week_low")
                     high = item.get("two_week_high")
                     rng = f"${low:.2f} - ${high:.2f}" if low is not None and high is not None else ""
@@ -1678,6 +1734,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "symbol": t,
                         "price": item.get("current_price"),
                         "stance": st,
+                        "composite_score": item.get("composite_score") or (item.get("ensemble") or {}).get("composite_score"),
                         "range": rng,
                         "news_call": item.get("news_summary") or "",
                         "raw_analysis": an,
@@ -1687,6 +1744,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                         "overnight_futures": item.get("overnight_futures") or "",
                         "sma_50": item.get("sma_50"),
                         "sma_200": item.get("sma_200"),
+                        "rsi_14": item.get("rsi_14"),
+                        "drawdown_2w_pct": item.get("drawdown_2w_pct"),
+                        "exhaustion_label": item.get("exhaustion_label"),
+                        "fundamentals": item.get("fundamentals"),
+                        "qwen_synthesis": item.get("qwen_synthesis"),
+                        "ensemble": item.get("ensemble"),
                         "thinking_process": item.get("thinking_process") or ""
                     })
                 self._send_json(hist)
@@ -1726,11 +1789,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 local_summary = (data.get("news_summary") or "").strip()
 
                 m_stance = re.search(r"(?:Final Operational Stance|FINAL OPERATIONAL VERDICT|Stance):\s*\*?([A-Za-z -]+)", analysis_str, re.IGNORECASE)
-                stance = m_stance.group(1).strip().upper() if m_stance else ("BULLISH" if "BULLISH" in analysis_str else "BEARISH" if "BEARISH" in analysis_str else "NEUTRAL")
+                stance = data.get("stance") or (data.get("ensemble") or {}).get("stance")
+                if not stance:
+                    stance = m_stance.group(1).strip().upper() if m_stance else ("BULLISH" if "BULLISH" in analysis_str else "BEARISH" if "BEARISH" in analysis_str else "NEUTRAL")
 
                 self._send_json({
                     "symbol": symbol,
                     "stance": stance,
+                    "composite_score": data.get("composite_score") or (data.get("ensemble") or {}).get("composite_score"),
                     "price": price,
                     "range": rng,
                     "news_call": local_summary or "Neutral / None",
@@ -1741,6 +1807,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "overnight_futures": data.get("overnight_futures") or "",
                     "sma_50": data.get("sma_50"),
                     "sma_200": data.get("sma_200"),
+                    "rsi_14": data.get("rsi_14"),
+                    "drawdown_2w_pct": data.get("drawdown_2w_pct"),
+                    "exhaustion_label": data.get("exhaustion_label"),
+                    "fundamentals": data.get("fundamentals"),
+                    "qwen_synthesis": data.get("qwen_synthesis"),
+                    "ensemble": data.get("ensemble"),
                     "thinking_process": data.get("thinking_process") or ""
                 })
             except Exception as e:
