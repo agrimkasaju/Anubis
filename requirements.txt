@@ -17,3 +17,5 @@ youtube-transcript-api
 pyaudio
 PyQt6
 fpdf2
+google-auth-oauthlib
+google-api-python-client
