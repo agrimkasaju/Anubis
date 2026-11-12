@@ -1253,6 +1253,9 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
         fund_line_2 = f"• Forward Net Loss Trajectory: {loss_traj} | Dip-Buy Legitimacy: {dip_legit}"
         pdf.cell(0, 4.5, clean_pdf_text(fund_line_1), new_x="LMARGIN", new_y="NEXT")
         pdf.cell(0, 4.5, clean_pdf_text(fund_line_2), new_x="LMARGIN", new_y="NEXT")
+        ens = data.get("ensemble") or {}
+        for bullet in ens.get("derivation_bullets", []):
+            pdf.cell(0, 4.2, clean_pdf_text(f"• {bullet}"), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
 
     # Candlestick Chart
