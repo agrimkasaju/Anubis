@@ -147,10 +147,54 @@ Instructions:
     }
 
 
+def cleanup_legacy_individual_events(service=None) -> int:
+    """
+    Scans for and purges any legacy individual job events (e.g. 'Applied: ...' or 'Skipped: ...')
+    created by older sync versions to prevent calendar clutter.
+    """
+    if not service:
+        service = get_calendar_service(interactive=False)
+    if not service:
+        return 0
+
+    deleted_count = 0
+    try:
+        now = datetime.now(timezone.utc)
+        time_min = (now - timedelta(days=60)).isoformat()
+        time_max = (now + timedelta(days=60)).isoformat()
+
+        res = service.events().list(
+            calendarId="primary",
+            timeMin=time_min,
+            timeMax=time_max,
+            singleEvents=True,
+            maxResults=250,
+        ).execute()
+
+        for ev in res.get("items", []):
+            summary = (ev.get("summary") or "").strip()
+            ext = ev.get("extendedProperties", {}).get("private", {})
+            if (
+                ext.get("source") == "anubis_ai_job_search"
+                or (summary.startswith("Applied: ") and " - " in summary)
+                or (summary.startswith("Skipped: ") and " - " in summary)
+            ) and summary != SYNC_EVENT_SUMMARY:
+                try:
+                    service.events().delete(calendarId="primary", eventId=ev["id"]).execute()
+                    deleted_count += 1
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[CalendarJobSync] Legacy cleanup notice: {e}")
+
+    return deleted_count
+
+
 def push_job_sync_to_calendar(service=None) -> dict:
     """
     Pushes local applied_jobs.json and job_history stats to the single Google Calendar sync event.
     Creates the event if it doesn't exist, or updates it if it does.
+    Also ensures any legacy individual job events are purged.
     """
     if not service:
         service = get_calendar_service(interactive=False)
@@ -159,6 +203,9 @@ def push_job_sync_to_calendar(service=None) -> dict:
             "status": "error",
             "message": "Google Calendar authentication unavailable. Ensure config/google_token.json is valid.",
         }
+
+    # Clean any legacy clutter first
+    cleanup_legacy_individual_events(service)
 
     # Ensure files and seedings are fresh
     get_job_history()
