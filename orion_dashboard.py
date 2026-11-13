@@ -1123,6 +1123,21 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     if not data or "error" in data:
         return None
 
+    def format_currency(val: float | None) -> str:
+        if val is None or val == 0:
+            return "N/A"
+        abs_val = abs(val)
+        sign = "-" if val < 0 else ""
+        if abs_val >= 1_000_000_000_000:
+            return f"{sign}${abs_val / 1_000_000_000_000:.2f}T"
+        if abs_val >= 1_000_000_000:
+            return f"{sign}${abs_val / 1_000_000_000:.2f}B"
+        if abs_val >= 1_000_000:
+            return f"{sign}${abs_val / 1_000_000:.2f}M"
+        if abs_val >= 1_000:
+            return f"{sign}${abs_val / 1_000:.2f}K"
+        return f"{sign}${abs_val:.2f}"
+
     def clean_pdf_text(text: str, is_unicode: bool = True) -> str:
         if not text:
             return ""
@@ -1322,21 +1337,38 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     pdf.set_xy(17, fund_y + 2.5)
     pdf.set_font(F, "B", 8.5)
     pdf.set_text_color(15, 23, 42)
-    pdf.cell(176, 4.5, "EARNINGS QUALITY & NET LOSS INFLECTION FORECAST", align="L")
+    if fund.get("is_etf"):
+        pdf.cell(176, 4.5, "FUND ASSET & PRODUCT STRUCTURE (EXCHANGE-TRADED FUND / ETF)", align="L")
+        cat = fund.get("category") or "Exchange Traded Fund"
+        fam = fund.get("fund_family") or "Fund Sponsor"
+        aum_str = format_currency(fund.get("total_assets")) if fund.get("total_assets") else "N/A"
+        nav_str = f"${fund.get('nav_price'):.2f}" if fund.get("nav_price") else "N/A"
+        beta_str = f"{fund.get('beta'):.2f}x" if fund.get("beta") else "N/A"
+        yield_str = f"{fund.get('yield_pct'):.2f}%" if fund.get("yield_pct") else "N/A"
 
-    yoy = f"{fund.get('revenue_yoy_growth_pct', 0):+.1f}%" if fund.get("revenue_yoy_growth_pct") is not None else "N/A"
-    gm = f"{fund.get('gross_margin_pct', 0):.1f}%" if fund.get("gross_margin_pct") is not None else "N/A"
-    q_regime = qwen.get("earnings_quality_regime") or ("CAPEX_HYPER_SCALING" if fund.get("capex_expansion_flag") else "PROFITABLE_GROWTH")
-    loss_traj = qwen.get("predicted_next_q_loss_trajectory") or "STABLE"
-    dip_legit = qwen.get("dip_buying_legitimacy") or "SPECULATIVE_BOUNCE"
+        pdf.set_xy(17, fund_y + 7.5)
+        pdf.set_font(F, "", 8)
+        pdf.set_text_color(51, 65, 85)
+        pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} Product Structure: {cat}   |   Issuer: {fam}", is_unicode=is_uni), align="L")
 
-    pdf.set_xy(17, fund_y + 7.5)
-    pdf.set_font(F, "", 8)
-    pdf.set_text_color(51, 65, 85)
-    pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} YoY Revenue Velocity: {yoy}   |   Gross Margin: {gm}   |   Earnings Quality: {q_regime}", is_unicode=is_uni), align="L")
+        pdf.set_xy(17, fund_y + 12)
+        pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} Assets Under Management: {aum_str}   |   NAV: {nav_str}   |   Leverage Beta: {beta_str}   |   Yield: {yield_str}", is_unicode=is_uni), align="L")
+    else:
+        pdf.cell(176, 4.5, "EARNINGS QUALITY & NET LOSS INFLECTION FORECAST", align="L")
 
-    pdf.set_xy(17, fund_y + 12)
-    pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} Next-Quarter Loss Trajectory: {loss_traj}   |   Dip-Buying Legitimacy: {dip_legit}", is_unicode=is_uni), align="L")
+        yoy = f"{fund.get('revenue_yoy_growth_pct', 0):+.1f}%" if fund.get("revenue_yoy_growth_pct") is not None else "N/A"
+        gm = f"{fund.get('gross_margin_pct', 0):.1f}%" if fund.get("gross_margin_pct") is not None else "N/A"
+        q_regime = qwen.get("earnings_quality_regime") or ("CAPEX_HYPER_SCALING" if fund.get("capex_expansion_flag") else "PROFITABLE_GROWTH")
+        loss_traj = qwen.get("predicted_next_q_loss_trajectory") or "STABLE"
+        dip_legit = qwen.get("dip_buying_legitimacy") or "SPECULATIVE_BOUNCE"
+
+        pdf.set_xy(17, fund_y + 7.5)
+        pdf.set_font(F, "", 8)
+        pdf.set_text_color(51, 65, 85)
+        pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} YoY Revenue Velocity: {yoy}   |   Gross Margin: {gm}   |   Earnings Quality: {q_regime}", is_unicode=is_uni), align="L")
+
+        pdf.set_xy(17, fund_y + 12)
+        pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} Next-Quarter Loss Trajectory: {loss_traj}   |   Dip-Buying Legitimacy: {dip_legit}", is_unicode=is_uni), align="L")
 
     curr_b_y = fund_y + 17
     pdf.set_font(F, "", 7.8)
