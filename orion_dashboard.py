@@ -1429,8 +1429,20 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
                 pdf.multi_cell(178, 4, clean_pdf_text(l, is_unicode=is_uni))
                 pdf.set_y(th_y + 15)
             else:
-                pdf.set_x(18)
-                pdf.multi_cell(176, 4.2, clean_pdf_text(l, is_unicode=is_uni))
+                clean_l = l.lstrip("-*• ")
+                if any(k in clean_l for k in ["[INSIDER BUY]", "[FDA", "[OFFERING", "[CONTRACT", "[M&A", "[EARNINGS BEAT", "[PRIORITY", "⚡"]):
+                    pdf.set_x(18)
+                    pdf.set_font(F, "B", 8.2)
+                    pdf.set_text_color(180, 83, 9)  # warm amber/bronze for institutional catalyst
+                    pdf.multi_cell(176, 4.2, clean_pdf_text(f"{bullet_char} {clean_l}", is_unicode=is_uni))
+                    pdf.set_font(F, "", 8.2)
+                    pdf.set_text_color(51, 65, 85)
+                elif l.startswith(("- ", "* ", "• ")):
+                    pdf.set_x(18)
+                    pdf.multi_cell(176, 4.2, clean_pdf_text(f"{bullet_char} {clean_l}", is_unicode=is_uni))
+                else:
+                    pdf.set_x(14)
+                    pdf.multi_cell(182, 4.2, clean_pdf_text(clean_l, is_unicode=is_uni))
 
     pdf.ln(3)
 
