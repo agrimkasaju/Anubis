@@ -1123,146 +1123,244 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
     if not data or "error" in data:
         return None
 
-    def clean_pdf_text(text: str) -> str:
+    def clean_pdf_text(text: str, is_unicode: bool = True) -> str:
         if not text:
             return ""
-        no_emoji = re.sub(r'[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\u2300-\u23ff]|[\ufe00-\ufe0f]', '', text)
-        no_md = re.sub(r"\*\*", "", no_emoji)
-        return no_md.encode("latin-1", "replace").decode("latin-1")
+        # Strip emojis and pictographs
+        emoji_pattern = re.compile(
+            r'[\U00010000-\U0010ffff]|[\u2600-\u27bf]|[\u2300-\u23ff]|[\ufe00-\ufe0f]',
+            flags=re.UNICODE
+        )
+        no_emoji = emoji_pattern.sub('', text)
+        no_md = re.sub(r'\*\*(.*?)\*\*', r'\1', no_emoji)
+        no_md = re.sub(r'\*(.*?)\*', r'\1', no_md)
+        no_md = no_md.replace('—', ' - ').replace('–', ' - ').replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
+        # Sanitize internal network telemetry
+        no_ip = re.sub(r'100\.\d{1,3}\.\d{1,3}\.\d{1,3}', 'Internal Node', no_md)
+        no_loopback = re.sub(r'127\.0\.0\.1', 'Local Node', no_ip)
+        no_ports = re.sub(r':(8000|8080|8088|5173|3000)', '', no_loopback)
+        cleaned = no_ports.strip()
+        if not is_unicode:
+            cleaned = cleaned.replace('•', '-')
+            return cleaned.encode('latin-1', 'replace').decode('latin-1')
+        return cleaned
 
-    class StockReportPDF(FPDF):
+    class ModernStockReportPDF(FPDF):
+        def __init__(self):
+            super().__init__(orientation="P", unit="mm", format="A4")
+            self.set_auto_page_break(auto=True, margin=14)
+            self.font_family = "Helvetica"
+            self.is_unicode = False
+            font_reg = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+            font_bold = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+            font_italic = "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf"
+            if os.path.exists(font_reg) and os.path.exists(font_bold):
+                self.add_font("Sans", "", font_reg)
+                self.add_font("Sans", "B", font_bold)
+                if os.path.exists(font_italic):
+                    self.add_font("Sans", "I", font_italic)
+                self.font_family = "Sans"
+                self.is_unicode = True
+
         def header(self):
-            self.set_font("Helvetica", "B", 8)
+            self.set_font(self.font_family, "B", 8)
             self.set_text_color(100, 116, 139)
-            self.cell(0, 6, "QUANTITATIVE & FUNDAMENTAL INSTITUTIONAL REPORT", align="L")
-            self.set_font("Helvetica", "", 8)
-            self.cell(0, 6, "PUBLIC MARKET DATA", align="R")
-            self.ln(7)
+            self.cell(100, 5, "QUANTITATIVE & FUNDAMENTAL RESEARCH REPORT", align="L")
+            self.set_font(self.font_family, "", 8)
+            bullet_sym = "•" if self.is_unicode else "-"
+            self.cell(0, 5, f"INSTITUTIONAL GRADE {bullet_sym} PUBLIC MARKET DATA", align="R")
+            self.ln(5.5)
+            self.set_draw_color(203, 213, 225)
+            self.set_line_width(0.3)
+            self.line(14, self.get_y(), 196, self.get_y())
+            self.ln(3)
 
         def footer(self):
             self.set_y(-12)
-            self.set_font("Helvetica", "I", 8)
+            self.set_draw_color(226, 232, 240)
+            self.set_line_width(0.3)
+            self.line(14, self.get_y(), 196, self.get_y())
+            self.set_font(self.font_family, "I", 7.5)
             self.set_text_color(148, 163, 184)
-            self.cell(0, 8, f"Page {self.page_no()}/{{nb}}  |  Confidential & Personal Use Only  |  No Server Ports or Private Telemetry", align="C")
+            self.cell(0, 8, f"Page {self.page_no()}/{{nb}}   |   Private & Confidential Research Summary   |   Zero Telemetry Exposure", align="C")
 
-    pdf = StockReportPDF(orientation="P", unit="mm", format="A4")
+        def draw_card(self, x, y, w, h, bg_rgb, border_rgb):
+            self.set_fill_color(*bg_rgb)
+            self.set_draw_color(*border_rgb)
+            self.set_line_width(0.3)
+            self.rect(x, y, w, h, style="FD")
+
+    pdf = ModernStockReportPDF()
     pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    F = pdf.font_family
+    is_uni = pdf.is_unicode
+    bullet_char = "•" if is_uni else "-"
 
-    # Title
-    pdf.set_font("Helvetica", "B", 20)
+    # Header Title
+    pdf.set_font(F, "B", 18)
     pdf.set_text_color(15, 23, 42)
-    pdf.cell(0, 9, f"{symbol} - Multi-Factor Quantitative & Fundamental Analysis", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(100, 8, f"{symbol} Quantitative Research", new_x="RIGHT", new_y="TOP")
 
-    # Date / Timestamp
     ts = data.get("timestamp_str") or datetime.now().strftime("%b %d, %Y - %H:%M")
-    if ts:
-        pdf.set_font("Helvetica", "", 8.5)
-        pdf.set_text_color(100, 116, 139)
-        pdf.cell(0, 5, f"Evaluation Date: {ts}", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(2)
+    pdf.set_font(F, "", 8.5)
+    pdf.set_text_color(100, 116, 139)
+    pdf.cell(0, 8, f"Generated: {ts}", align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
 
-    # Stance & Metrics extraction
-    raw_stance = data.get("stance") or ""
-    if not raw_stance and data.get("ensemble"):
-        raw_stance = data["ensemble"].get("stance", "")
-    if not raw_stance:
-        analysis_text = data.get("analysis", "")
-        if "ACCUMULATE" in analysis_text:
-            raw_stance = "ACCUMULATE (DIP-BUY)"
-        elif "MOMENTUM" in analysis_text or "BULLISH" in analysis_text:
-            raw_stance = "BULLISH (MOMENTUM)"
-        elif "REVERSAL" in analysis_text:
-            raw_stance = "SPECULATIVE (REVERSAL)"
-        elif "BEARISH" in analysis_text:
-            raw_stance = "BEARISH (BREAKDOWN)"
-        else:
-            raw_stance = "NEUTRAL (CONSOLIDATION)"
-
-    clean_stance = clean_pdf_text(raw_stance).strip()
-
-    pdf.set_font("Helvetica", "B", 10.5)
-    if "ACCUMULATE" in clean_stance:
-        pdf.set_fill_color(209, 250, 229)
-        pdf.set_text_color(6, 95, 70)
-    elif "BULLISH" in clean_stance or "MOMENTUM" in clean_stance:
-        pdf.set_fill_color(220, 252, 231)
-        pdf.set_text_color(22, 101, 52)
-    elif "SPECULATIVE" in clean_stance or "REVERSAL" in clean_stance:
-        pdf.set_fill_color(254, 243, 199)
-        pdf.set_text_color(180, 83, 9)
-    elif "BEARISH" in clean_stance or "BREAKDOWN" in clean_stance:
-        pdf.set_fill_color(254, 226, 226)
-        pdf.set_text_color(153, 27, 27)
-    else:
-        pdf.set_fill_color(241, 245, 249)
-        pdf.set_text_color(71, 85, 105)
-
+    # Stance & Color Mapping
+    raw_stance = data.get("stance") or (data.get("ensemble") or {}).get("stance", "NEUTRAL")
+    clean_stance = clean_pdf_text(raw_stance, is_unicode=is_uni).strip()
     comp_score = data.get("composite_score")
     if comp_score is None and data.get("ensemble"):
         comp_score = data["ensemble"].get("composite_score")
-    comp_str = f" | SCORE: {comp_score:.1f}/100" if comp_score is not None else ""
+    comp_score = comp_score if comp_score is not None else 50.0
 
-    pdf.cell(80, 8, f"  STANCE: {clean_stance}{comp_str}  ", fill=True, border=1)
-    
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(30, 41, 59)
-    price = data.get("current_price", 0)
+    if "ACCUMULATE" in clean_stance:
+        badge_bg = (209, 250, 229)
+        badge_border = (52, 211, 153)
+        badge_text = (6, 95, 70)
+    elif "BULLISH" in clean_stance or "MOMENTUM" in clean_stance:
+        badge_bg = (220, 252, 231)
+        badge_border = (74, 222, 128)
+        badge_text = (22, 101, 52)
+    elif "SPECULATIVE" in clean_stance or "REVERSAL" in clean_stance:
+        badge_bg = (254, 243, 199)
+        badge_border = (251, 191, 36)
+        badge_text = (180, 83, 9)
+    elif "BEARISH" in clean_stance or "BREAKDOWN" in clean_stance:
+        badge_bg = (254, 226, 226)
+        badge_border = (248, 113, 113)
+        badge_text = (153, 27, 27)
+    else:
+        badge_bg = (241, 245, 249)
+        badge_border = (203, 213, 225)
+        badge_text = (71, 85, 105)
+
+    # Executive Header Card (182mm wide, 18mm high)
+    start_y = pdf.get_y()
+    pdf.draw_card(14, start_y, 182, 18, (248, 250, 252), (226, 232, 240))
+
+    # Left Pill: Stance
+    pdf.set_xy(17, start_y + 3)
+    pdf.set_fill_color(*badge_bg)
+    pdf.set_draw_color(*badge_border)
+    pdf.set_text_color(*badge_text)
+    pdf.set_font(F, "B", 9.5)
+    pdf.cell(78, 6.5, f"STANCE: {clean_stance}", fill=True, border=1, align="C")
+
+    # Left Pill: Composite Score
+    pdf.set_xy(17, start_y + 10.5)
+    pdf.set_font(F, "B", 8.5)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(78, 4.5, f"Institutional Composite Score: {comp_score:.1f} / 100", align="C")
+
+    # Right Block: Price & Technical Summary
+    price = data.get("current_price") or data.get("price") or 0.0
     session = data.get("market_session", "Regular")
-    session_str = f" ({session})" if session != "Regular" else ""
     reg_price = data.get("regular_price")
-    reg_str = f" | Reg Close: ${reg_price:.2f}" if (reg_price and session != "Regular") else ""
-    low = data.get("two_week_low", 0)
-    high = data.get("two_week_high", 0)
+    low = data.get("two_week_low", 0.0)
+    high = data.get("two_week_high", 0.0)
     sma_50 = data.get("sma_50")
     sma_200 = data.get("sma_200")
-    sma_parts = []
-    if sma_50:
-        sma_parts.append(f"50-SMA: ${sma_50:.2f}")
-    if sma_200:
-        sma_parts.append(f"200-SMA: ${sma_200:.2f}")
-    sma_str = f"   |   {' | '.join(sma_parts)}" if sma_parts else ""
-    pdf.cell(0, 8, f"   Price: ${price:.2f}{session_str}{reg_str}   |   2-Wk Range: ${low:.2f} - ${high:.2f}{sma_str}", new_x="LMARGIN", new_y="NEXT")
-    fut_str = data.get("overnight_futures", "")
-    if fut_str:
-        pdf.set_font("Helvetica", "I", 8.5)
-        pdf.set_text_color(71, 85, 105)
-        pdf.cell(0, 5, f"   Overnight Broad-Market Futures: {fut_str}", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
-    pdf.ln(3)
+    bb_low = data.get("bb_lower")
 
-    # Net Loss Inflection & Fundamental Matrix Callout Box
+    pdf.set_xy(100, start_y + 2.5)
+    pdf.set_font(F, "B", 12)
+    pdf.set_text_color(15, 23, 42)
+    session_tag = f" ({session})" if session != "Regular" else ""
+    pdf.cell(93, 5.5, f"${price:.2f}{session_tag}", align="L")
+
+    pdf.set_xy(100, start_y + 8)
+    pdf.set_font(F, "", 8)
+    pdf.set_text_color(71, 85, 105)
+    close_info = f"Reg Close: ${reg_price:.2f}  |  " if (reg_price and session != "Regular") else ""
+    pdf.cell(93, 4, f"{close_info}2-Wk Range: ${low:.2f} - ${high:.2f}", align="L")
+
+    pdf.set_xy(100, start_y + 12.5)
+    sma_strs = []
+    if sma_50: sma_strs.append(f"50-SMA: ${sma_50:.2f}")
+    if sma_200: sma_strs.append(f"200-SMA: ${sma_200:.2f}")
+    if bb_low: sma_strs.append(f"Lower-BB: ${bb_low:.2f}")
+    pdf.cell(93, 4, "  |  ".join(sma_strs), align="L")
+
+    pdf.set_y(start_y + 20)
+
+    # Technical Volatility & Dynamic Factor Weights Strip
+    tech_box_y = pdf.get_y()
+    pdf.draw_card(14, tech_box_y, 182, 11, (255, 255, 255), (226, 232, 240))
+    pdf.set_xy(16, tech_box_y + 1.5)
+    pdf.set_font(F, "", 7.8)
+    pdf.set_text_color(71, 85, 105)
+
+    rsi_14 = data.get("rsi_14", 50.0)
+    dd_pct = data.get("drawdown_2w_pct", 0.0)
+    exh_label = data.get("exhaustion_label") or "NORMAL"
+    ens = data.get("ensemble") or {}
+    regime = ens.get("regime_mode") or "STANDARD"
+    f_sc = ens.get("fundamental_score", 0)
+    c_sc = ens.get("catalyst_score", 0)
+    t_sc = ens.get("technical_score", 0)
+
+    line1 = f"Technical Volatility: RSI(14): {rsi_14:.1f}   {bullet_char}   Drawdown: {dd_pct:+.1f}% from peak   {bullet_char}   State: {exh_label}   {bullet_char}   Regime: {regime}"
+    line2 = f"Multi-Factor Dynamic Weights: Fundamental Health: {f_sc:.0f}/100   {bullet_char}   Catalyst Conviction: {c_sc:.0f}/100   {bullet_char}   Microstructure Support: {t_sc:.0f}/100"
+    pdf.cell(178, 3.8, clean_pdf_text(line1, is_unicode=is_uni), align="L")
+    pdf.set_xy(16, tech_box_y + 5.5)
+    pdf.cell(178, 3.8, clean_pdf_text(line2, is_unicode=is_uni), align="L")
+
+    pdf.set_y(tech_box_y + 13)
+
+    # Fundamental Health & Net Loss Inflection Forecast Card
     fund = data.get("fundamentals") or {}
     qwen = data.get("qwen_synthesis") or {}
-    if fund or qwen:
-        pdf.set_font("Helvetica", "B", 9.5)
-        pdf.set_fill_color(248, 250, 252)
-        pdf.set_text_color(15, 23, 42)
-        pdf.cell(0, 6, "Fundamental Health & Net Loss Inflection Forecast:", fill=True, border="T", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 8.5)
-        pdf.set_text_color(51, 65, 85)
+    fund_y = pdf.get_y()
 
-        yoy = f"{fund.get('revenue_yoy_growth_pct', 0):+.1f}%" if fund.get("revenue_yoy_growth_pct") is not None else "N/A"
-        gm = f"{fund.get('gross_margin_pct', 0):.1f}%" if fund.get("gross_margin_pct") is not None else "N/A"
-        regime = qwen.get("earnings_quality_regime") or ("CAPEX_INFRASTRUCTURE_SCALING" if fund.get("capex_expansion_flag") else "PROFITABLE_GROWTH")
-        loss_traj = qwen.get("predicted_next_q_loss_trajectory") or "STABLE"
-        dip_legit = qwen.get("dip_buying_legitimacy") or "SPECULATIVE_BOUNCE"
+    bullets = ens.get("derivation_bullets") or []
+    fund_card_h = 24 + (len(bullets) * 4.5)
+    pdf.draw_card(14, fund_y, 182, fund_card_h, (248, 250, 252), (203, 213, 225))
 
-        fund_line_1 = f"• Revenue Velocity: {yoy} YoY | Gross Margin: {gm} | Quality Regime: {regime}"
-        fund_line_2 = f"• Forward Net Loss Trajectory: {loss_traj} | Dip-Buy Legitimacy: {dip_legit}"
-        pdf.cell(0, 4.5, clean_pdf_text(fund_line_1), new_x="LMARGIN", new_y="NEXT")
-        pdf.cell(0, 4.5, clean_pdf_text(fund_line_2), new_x="LMARGIN", new_y="NEXT")
-        ens = data.get("ensemble") or {}
-        for bullet in ens.get("derivation_bullets", []):
-            pdf.cell(0, 4.2, clean_pdf_text(f"• {bullet}"), new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
+    pdf.set_xy(17, fund_y + 2.5)
+    pdf.set_font(F, "B", 8.5)
+    pdf.set_text_color(15, 23, 42)
+    pdf.cell(176, 4.5, "EARNINGS QUALITY & NET LOSS INFLECTION FORECAST", align="L")
 
-    # Candlestick Chart
-    chart_file = f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart.png"
-    if not os.path.exists(chart_file):
+    yoy = f"{fund.get('revenue_yoy_growth_pct', 0):+.1f}%" if fund.get("revenue_yoy_growth_pct") is not None else "N/A"
+    gm = f"{fund.get('gross_margin_pct', 0):.1f}%" if fund.get("gross_margin_pct") is not None else "N/A"
+    q_regime = qwen.get("earnings_quality_regime") or ("CAPEX_HYPER_SCALING" if fund.get("capex_expansion_flag") else "PROFITABLE_GROWTH")
+    loss_traj = qwen.get("predicted_next_q_loss_trajectory") or "STABLE"
+    dip_legit = qwen.get("dip_buying_legitimacy") or "SPECULATIVE_BOUNCE"
+
+    pdf.set_xy(17, fund_y + 7.5)
+    pdf.set_font(F, "", 8)
+    pdf.set_text_color(51, 65, 85)
+    pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} YoY Revenue Velocity: {yoy}   |   Gross Margin: {gm}   |   Earnings Quality: {q_regime}", is_unicode=is_uni), align="L")
+
+    pdf.set_xy(17, fund_y + 12)
+    pdf.cell(176, 4, clean_pdf_text(f"{bullet_char} Next-Quarter Loss Trajectory: {loss_traj}   |   Dip-Buying Legitimacy: {dip_legit}", is_unicode=is_uni), align="L")
+
+    curr_b_y = fund_y + 17
+    pdf.set_font(F, "", 7.8)
+    pdf.set_text_color(71, 85, 105)
+    for bullet in bullets:
+        pdf.set_xy(17, curr_b_y)
+        pdf.multi_cell(176, 4, clean_pdf_text(f"{bullet_char} {bullet}", is_unicode=is_uni))
+        curr_b_y = pdf.get_y()
+
+    pdf.set_y(fund_y + fund_card_h + 3)
+
+    # 14-Day Candlestick Chart Inset
+    chart_file = None
+    for candidate in [
+        f"/tmp/{symbol}_chart.png",
+        f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart.png",
+        f"/home/grim/Downloads/stock-analyzer/output/{symbol}_chart_compressed.png",
+    ]:
+        if os.path.exists(candidate):
+            chart_file = candidate
+            break
+
+    if not chart_file:
         try:
-            stock_server = os.getenv("STOCK_SERVER_HOST") or "http://localhost:8000"
             req_img = urllib.request.Request(f"{stock_server}/charts/{symbol}_chart.png")
             with urllib.request.urlopen(req_img, timeout=4) as res_img:
                 tmp_chart = f"/tmp/{symbol}_pdf_chart.png"
@@ -1273,34 +1371,144 @@ def generate_stock_pdf(symbol: str) -> bytes | None:
             chart_file = None
 
     if chart_file and os.path.exists(chart_file):
-        pdf.set_font("Helvetica", "B", 10.5)
-        pdf.set_text_color(30, 41, 59)
-        pdf.cell(0, 5, "14-Day Candlestick & Volume Profile:", new_x="LMARGIN", new_y="NEXT")
-        pdf.image(chart_file, x=15, w=180)
-        pdf.ln(4)
+        pdf.set_font(F, "B", 8.5)
+        pdf.set_text_color(15, 23, 42)
+        pdf.cell(0, 4.5, "14-Day Candlestick & Volume Profile (Amber: 50-SMA  |  Purple: 200-SMA  |  Cyan Dotted: Lower-BB)", new_x="LMARGIN", new_y="NEXT")
+        img_y = pdf.get_y() + 1
+        chart_w = 182
+        chart_h = 110
+        try:
+            import struct
+            with open(chart_file, "rb") as f_dim:
+                dim_data = f_dim.read(24)
+                if len(dim_data) >= 24 and dim_data[:8] == b"\x89PNG\r\n\x1a\n":
+                    pw, ph = struct.unpack(">II", dim_data[16:24])
+                    if pw > 0 and ph > 0:
+                        ar = pw / ph
+                        chart_h = min(114, chart_w / ar)
+        except Exception:
+            chart_h = 110
+        pdf.image(chart_file, x=14, y=img_y, w=chart_w, h=chart_h)
+        pdf.set_draw_color(226, 232, 240)
+        pdf.set_line_width(0.3)
+        pdf.rect(14, img_y, chart_w, chart_h)
 
-    # News Catalysts
+    # ==================== PAGE 2 ====================
+    pdf.add_page()
+
+    # Forensic Catalysts & News Headwinds
     news_summary = data.get("news_summary", "").strip()
     if news_summary:
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font(F, "B", 10.5)
         pdf.set_text_color(15, 23, 42)
-        news_source = data.get("news_source", "News Catalysts")
-        pdf.cell(0, 7, f"Catalysts & Sentiment ({news_source}):", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(51, 65, 85)
-        clean_news = news_summary.encode("latin-1", "replace").decode("latin-1")
-        pdf.multi_cell(0, 4.5, clean_news)
-        pdf.ln(3)
+        news_source = data.get("news_source", "Forensic Synthesis")
+        pdf.cell(0, 5, f"Forensic Catalysts & News Digest ({clean_pdf_text(news_source, is_unicode=is_uni)})", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1.5)
 
-    # Technical Analysis
-    if analysis_text:
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.set_text_color(15, 23, 42)
-        pdf.cell(0, 7, "Quantitative & Technical Assessment:", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 9)
+        lines = news_summary.split("\n")
+        pdf.set_font(F, "", 8.2)
         pdf.set_text_color(51, 65, 85)
-        clean_analysis = re.sub(r"\*\*", "", analysis_text).encode("latin-1", "replace").decode("latin-1")
-        pdf.multi_cell(0, 4.5, clean_analysis)
+        for line in lines:
+            l = line.strip()
+            if not l:
+                pdf.ln(1)
+                continue
+            if l.startswith(("1.", "2.", "3.")):
+                pdf.ln(1.5)
+                pdf.set_font(F, "B", 8.5)
+                pdf.set_text_color(15, 23, 42)
+                pdf.cell(0, 4.5, clean_pdf_text(l, is_unicode=is_uni), new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font(F, "", 8.2)
+                pdf.set_text_color(51, 65, 85)
+            elif l.startswith("Forensic Thesis:"):
+                pdf.ln(1.5)
+                th_y = pdf.get_y()
+                pdf.draw_card(14, th_y, 182, 13, (241, 245, 249), (203, 213, 225))
+                pdf.set_xy(16, th_y + 1.5)
+                pdf.set_font(F, "I", 8)
+                pdf.multi_cell(178, 4, clean_pdf_text(l, is_unicode=is_uni))
+                pdf.set_y(th_y + 15)
+            else:
+                pdf.set_x(18)
+                pdf.multi_cell(176, 4.2, clean_pdf_text(l, is_unicode=is_uni))
+
+    pdf.ln(3)
+
+    # Quantitative Microstructure & Execution Plans
+    analysis_text = data.get("analysis", "")
+    if analysis_text:
+        pdf.set_font(F, "B", 10.5)
+        pdf.set_text_color(15, 23, 42)
+        pdf.cell(0, 5.5, "Quantitative Microstructure & Execution Plans", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1.5)
+
+        clean_analysis = clean_pdf_text(analysis_text, is_unicode=is_uni)
+        paragraphs = clean_analysis.split("\n")
+        pdf.set_font(F, "", 8.2)
+        pdf.set_text_color(51, 65, 85)
+
+        verdict_lines = []
+        in_verdict = False
+
+        for line in paragraphs:
+            l = line.strip()
+            if not l:
+                continue
+
+            if "FINAL OPERATIONAL VERDICT:" in l:
+                in_verdict = True
+                verdict_lines.append(l)
+                continue
+            if in_verdict:
+                verdict_lines.append(l)
+                continue
+
+            if any(h in l for h in ["1. Technical Structure", "2. Microstructure Dual", "3. Two-Way Symmetric", "4. Operational Stance"]):
+                pdf.ln(1.5)
+                pdf.set_font(F, "B", 8.5)
+                pdf.set_text_color(15, 23, 42)
+                pdf.cell(0, 4.5, l, new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font(F, "", 8.2)
+                pdf.set_text_color(51, 65, 85)
+            elif "Bullish Breakout Plan:" in l:
+                pdf.ln(1)
+                pdf.set_font(F, "B", 8.5)
+                pdf.set_text_color(22, 101, 52)
+                marker = "▲ " if is_uni else "[+] "
+                pdf.cell(0, 4.2, f"{marker}{l.replace('*', '').strip()}", new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font(F, "", 8.2)
+                pdf.set_text_color(51, 65, 85)
+            elif "Bearish Breakdown Plan:" in l:
+                pdf.ln(1)
+                pdf.set_font(F, "B", 8.5)
+                pdf.set_text_color(153, 27, 27)
+                marker = "▼ " if is_uni else "[-] "
+                pdf.cell(0, 4.2, f"{marker}{l.replace('*', '').strip()}", new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font(F, "", 8.2)
+                pdf.set_text_color(51, 65, 85)
+            else:
+                clean_l = l.lstrip("-*• ")
+                if l.startswith(("- ", "* ", "• ")):
+                    pdf.set_x(18)
+                    pdf.multi_cell(176, 4, f"{bullet_char} {clean_l}")
+                else:
+                    pdf.set_x(14)
+                    pdf.multi_cell(182, 4, clean_l)
+
+        # Render Executive Verdict Box at bottom of Page 2
+        if verdict_lines:
+            pdf.ln(3)
+            v_y = pdf.get_y()
+            pdf.draw_card(14, v_y, 182, 20, (248, 250, 252), badge_border)
+            pdf.set_xy(17, v_y + 2.5)
+            pdf.set_font(F, "B", 9)
+            pdf.set_text_color(*badge_text)
+            pdf.cell(176, 4.5, verdict_lines[0], align="L")
+            if len(verdict_lines) > 1:
+                pdf.set_xy(17, v_y + 8)
+                pdf.set_font(F, "", 8)
+                pdf.set_text_color(51, 65, 85)
+                pdf.multi_cell(176, 4, " ".join(verdict_lines[1:]))
 
     return bytes(pdf.output())
 
