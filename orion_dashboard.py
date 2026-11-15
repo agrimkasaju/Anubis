@@ -119,6 +119,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <meta name="theme-color" content="#09090b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -152,7 +155,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <header class="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur sticky top-0 z-50 px-4 py-3">
     <div class="max-w-6xl mx-auto flex items-center justify-between">
       <div class="flex items-center space-x-3">
-        <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></div>
+        <img src="/favicon.svg" alt="Orion Logo" class="w-7 h-7 drop-shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
         <span class="font-bold tracking-wider text-sm md:text-base text-zinc-100 uppercase">ORION <span class="text-cyan-400 font-mono">DASHBOARD</span></span>
       </div>
 
@@ -1714,6 +1717,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(html_bytes)))
             self.end_headers()
             self.wfile.write(html_bytes)
+            return
+
+        # Serve Root PWA / Icon Assets
+        if path in ["/manifest.webmanifest", "/apple-touch-icon.png", "/favicon.svg"] or (path.startswith("/pwa-") and path.endswith(".png")):
+            dist_dir = (BASE_DIR / "frontend" / "dist").resolve()
+            clean_name = Path(path.lstrip("/")).name
+            target_asset = (dist_dir / clean_name).resolve()
+            if target_asset.is_relative_to(dist_dir) and target_asset.is_file():
+                ext = target_asset.suffix.lower()
+                content_type = {
+                    ".webmanifest": "application/manifest+json",
+                    ".svg": "image/svg+xml",
+                    ".png": "image/png",
+                }.get(ext, "application/octet-stream")
+                try:
+                    data = target_asset.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.send_header("Cache-Control", "no-cache, must-revalidate")
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                except Exception:
+                    pass
+            self.send_response(404)
+            self.end_headers()
             return
 
         # Serve Vite Static Assets (/assets/*)

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Terminal, RefreshCw, ShieldCheck, ShieldAlert, Cpu } from 'lucide-react';
+import { OrionLogo } from './OrionLogo';
 
 interface NexusHeaderProps {
   onRefresh: () => void;
@@ -17,16 +18,12 @@ export const NexusHeader: React.FC<NexusHeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 border-b border-sky-900/30 bg-[#06090F]/90 backdrop-blur-xl px-4 py-3">
       <div className="max-w-6xl mx-auto flex items-center justify-between">
-        {/* Terminal Title */}
+        {/* Terminal Title & Orion Logo */}
         <div className="flex items-center space-x-3">
-          <div className="relative flex items-center justify-center">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping absolute opacity-75" />
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 relative" />
-          </div>
+          <OrionLogo size={30} />
           <div className="flex items-center space-x-2">
-            <Terminal className="w-4 h-4 text-cyan-400" />
             <span className="font-mono text-xs md:text-sm font-bold tracking-wider text-slate-100 uppercase">
-              ORION <span className="text-cyan-400">// NEXUS CORE</span>
+              ORION <span className="text-cyan-400">// NEXUS COMMAND</span>
             </span>
           </div>
         </div>
