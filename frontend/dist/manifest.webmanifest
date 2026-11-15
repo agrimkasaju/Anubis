@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "ORION Quantitative Market Intelligence",
+  "name": "ORION Nexus Command Companion",
   "short_name": "ORION",
-  "description": "Institutional Quantitative Stock Analysis & Forensic Intelligence",
+  "description": "ORION Standby Companion & Autonomous Systems Dashboard",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
