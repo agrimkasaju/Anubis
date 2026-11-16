@@ -5,6 +5,8 @@ venv/
 config/api_keys.json
 config/credentials.json
 config/google_token.json
+config/service_account.json
+*service_account*.json
 config/scheduled_reminders.json
 data/
 memory/long_term.json

@@ -25,9 +25,10 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 try:
-    from actions.google_auth import get_calendar_service
+    from actions.google_auth import get_calendar_service, get_target_calendar_id
 except Exception:
     get_calendar_service = lambda interactive=False: None
+    get_target_calendar_id = lambda: "primary"
 from job_history import (
     HISTORY_FILE,
     APPLIED_FILE,
@@ -70,11 +71,12 @@ def _save_tracked_event_id(event_id: str, html_link: str = ""):
 
 def find_sync_calendar_event(service) -> Optional[dict]:
     """Finds the single Orion sync event on Google Calendar."""
+    cal_id = get_target_calendar_id()
     # 1. Try tracked event ID first
     tracked_id = _get_tracked_event_id()
     if tracked_id:
         try:
-            ev = service.events().get(calendarId="primary", eventId=tracked_id).execute()
+            ev = service.events().get(calendarId=cal_id, eventId=tracked_id).execute()
             if ev and ev.get("status") != "cancelled":
                 return ev
         except Exception:
@@ -83,7 +85,7 @@ def find_sync_calendar_event(service) -> Optional[dict]:
     # 2. Search by exact summary
     try:
         res = service.events().list(
-            calendarId="primary",
+            calendarId=cal_id,
             q=SYNC_EVENT_SUMMARY,
             maxResults=10,
         ).execute()
@@ -157,6 +159,7 @@ def cleanup_legacy_individual_events(service=None) -> int:
     if not service:
         return 0
 
+    cal_id = get_target_calendar_id()
     deleted_count = 0
     try:
         now = datetime.now(timezone.utc)
@@ -164,7 +167,7 @@ def cleanup_legacy_individual_events(service=None) -> int:
         time_max = (now + timedelta(days=60)).isoformat()
 
         res = service.events().list(
-            calendarId="primary",
+            calendarId=cal_id,
             timeMin=time_min,
             timeMax=time_max,
             singleEvents=True,
@@ -180,7 +183,7 @@ def cleanup_legacy_individual_events(service=None) -> int:
                 or (summary.startswith("Skipped: ") and " - " in summary)
             ) and summary != SYNC_EVENT_SUMMARY:
                 try:
-                    service.events().delete(calendarId="primary", eventId=ev["id"]).execute()
+                    service.events().delete(calendarId=cal_id, eventId=ev["id"]).execute()
                     deleted_count += 1
                 except Exception:
                     pass
@@ -220,13 +223,14 @@ def push_job_sync_to_calendar(service=None) -> dict:
     history = _load_json(HISTORY_FILE, [])
     body = format_sync_event_body(clean_keys, history)
 
+    cal_id = get_target_calendar_id()
     existing_event = find_sync_calendar_event(service)
 
     try:
         if existing_event:
             event_id = existing_event["id"]
             updated = service.events().patch(
-                calendarId="primary",
+                calendarId=cal_id,
                 eventId=event_id,
                 body=body,
             ).execute()
@@ -242,7 +246,7 @@ def push_job_sync_to_calendar(service=None) -> dict:
             }
         else:
             created = service.events().insert(
-                calendarId="primary",
+                calendarId=cal_id,
                 body=body,
             ).execute()
             event_id = created.get("id")
