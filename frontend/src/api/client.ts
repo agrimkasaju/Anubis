@@ -90,21 +90,43 @@ export async function executeSearch(query: string): Promise<SearchResult> {
   return res.json();
 }
 
+export async function downloadPdfFile(url: string, filename: string): Promise<void> {
+  const token = getStoredToken();
+  let targetUrl = url;
+  if (token && !targetUrl.includes('token=')) {
+    targetUrl += (targetUrl.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
+  }
+  const res = await fetch(targetUrl, { headers: getAuthHeaders() });
+  if (!res.ok) throw new Error(`Failed to download PDF (${res.status})`);
+  const blob = await res.blob();
+  const file = new File([blob], filename, { type: 'application/pdf' });
+
+  // Native iOS PWA & Mobile Web Share (Zero-leak: only file, no text/url/host)
+  if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (shareErr: any) {
+      if (shareErr?.name === 'AbortError') return;
+    }
+  }
+
+  // Desktop / standard browser fallback
+  const blobUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => window.URL.revokeObjectURL(blobUrl), 3000);
+}
+
 export async function downloadStockPdf(symbol: string): Promise<void> {
   const token = getStoredToken();
   const params = new URLSearchParams({ symbol });
   if (token) params.set('token', token);
-  const res = await fetch(`/api/stock/pdf?${params.toString()}`, { headers: getAuthHeaders() });
-  if (!res.ok) throw new Error('Failed to generate PDF');
-  const blob = await res.blob();
-  const blobUrl = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = blobUrl;
-  a.download = `${symbol}_Analysis.pdf`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(blobUrl);
+  return downloadPdfFile(`/api/stock/pdf?${params.toString()}`, `${symbol}_Analysis.pdf`);
 }
 
 export function getJobPdfUrl(fileName: string): string {

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Briefcase, ExternalLink, Check, X, FileText, Mail, Files, Eye, Maximize2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { Briefcase, ExternalLink, Check, X, FileText, Mail, Files, Eye, Maximize2, Download, Loader2 } from 'lucide-react';
 import { PendingJob } from '../types/orion';
-import { resolveJob, getJobPdfUrl } from '../api/client';
+import { resolveJob, getJobPdfUrl, downloadPdfFile } from '../api/client';
 
 interface JobBridgeCardProps {
   pendingJob: PendingJob | null;
@@ -17,6 +18,19 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
   const [resolving, setResolving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewPdfFilename, setPreviewPdfFilename] = useState<string>('document.pdf');
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  useEffect(() => {
+    if (previewPdfUrl) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [previewPdfUrl]);
 
   const handleResolve = async (approved: boolean) => {
     setResolving(true);
@@ -35,8 +49,24 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
     }
   };
 
-  const openPreview = (pdfFile: string) => {
-    setPreviewPdfUrl(getJobPdfUrl(pdfFile));
+  const openPreview = (pdfFile: string, docLabel: string = 'Document') => {
+    const url = getJobPdfUrl(pdfFile);
+    const companyClean = (pendingJob?.company || 'Job').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileClean = pdfFile.split('/').pop() || `${docLabel}.pdf`;
+    setPreviewPdfFilename(`${companyClean}_${fileClean}`);
+    setPreviewPdfUrl(url);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!previewPdfUrl || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      await downloadPdfFile(previewPdfUrl, previewPdfFilename);
+    } catch (err: unknown) {
+      console.error('Save PDF error:', err);
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
 
   return (
@@ -107,7 +137,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => openPreview(pendingJob.resume_pdf || pendingJob.cv_pdf || 'resume.pdf')}
+                  onClick={() => openPreview(pendingJob.resume_pdf || pendingJob.cv_pdf || 'resume.pdf', 'Resume')}
                   className="flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl bg-slate-950/70 border border-sky-900/40 hover:border-cyan-500/50 text-slate-200 text-xs font-mono transition"
                 >
                   <FileText className="w-3.5 h-3.5 text-cyan-400" />
@@ -115,7 +145,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => openPreview(pendingJob.cover_letter_pdf || pendingJob.cl_pdf || 'cover_letter.pdf')}
+                  onClick={() => openPreview(pendingJob.cover_letter_pdf || pendingJob.cl_pdf || 'cover_letter.pdf', 'Cover_Letter')}
                   className="flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl bg-slate-950/70 border border-sky-900/40 hover:border-cyan-500/50 text-slate-200 text-xs font-mono transition"
                 >
                   <Mail className="w-3.5 h-3.5 text-cyan-400" />
@@ -123,7 +153,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => openPreview(pendingJob.combined_pdf || 'combined.pdf')}
+                  onClick={() => openPreview(pendingJob.combined_pdf || 'combined.pdf', 'Combined')}
                   className="flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-xl bg-cyan-950/40 border border-cyan-500/40 hover:border-cyan-400 text-cyan-300 text-xs font-mono font-bold transition"
                 >
                   <Files className="w-3.5 h-3.5 text-cyan-300" />
@@ -164,48 +194,66 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
         )}
       </section>
 
-      {/* PDF Lightbox Modal */}
-      {previewPdfUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
-          onClick={() => setPreviewPdfUrl(null)}
-        >
+      {/* PDF Lightbox Modal (Portaled directly to document.body for standalone PWA & mobile containment fix) */}
+      {previewPdfUrl &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            className="nexus-glass rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden border border-cyan-500/40 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            onClick={() => setPreviewPdfUrl(null)}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-sky-900/40 bg-slate-950/60">
-              <div className="flex items-center space-x-2 text-xs font-mono text-cyan-300">
-                <Eye className="w-4 h-4" />
-                <span>DOCUMENT PREVIEW (ZERO-LEAK)</span>
+            <div
+              className="nexus-glass rounded-2xl w-full max-w-4xl h-[92vh] sm:h-[88vh] md:h-[85vh] flex flex-col overflow-hidden border border-cyan-500/40 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 border-b border-sky-900/40 bg-slate-950/60">
+                <div className="flex items-center space-x-2 text-xs font-mono text-cyan-300 min-w-0">
+                  <Eye className="w-4 h-4 shrink-0" />
+                  <span className="truncate">DOCUMENT PREVIEW (ZERO-LEAK)</span>
+                </div>
+                <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleDownloadPdf}
+                    disabled={downloadingPdf}
+                    className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-slate-950 font-mono font-bold text-xs transition shadow-lg shadow-cyan-950/40 disabled:opacity-50"
+                    title="Save PDF directly to device (triggers native Save to Files on mobile)"
+                  >
+                    {downloadingPdf ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span className="hidden xs:inline">Save PDF</span>
+                  </button>
+                  <a
+                    href={previewPdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-400 border border-sky-700/40"
+                    title="Open in Full Tab"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPdfUrl(null)}
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800"
+                    title="Close preview"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <a
-                  href={previewPdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-400 border border-sky-700/40"
-                  title="Open in Full Tab"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setPreviewPdfUrl(null)}
-                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              <iframe
+                src={previewPdfUrl}
+                className="w-full flex-1 bg-white border-0"
+                title="Application PDF Viewer"
+              />
             </div>
-            <iframe
-              src={previewPdfUrl}
-              className="w-full flex-1 bg-white border-0"
-              title="Application PDF Viewer"
-            />
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 };

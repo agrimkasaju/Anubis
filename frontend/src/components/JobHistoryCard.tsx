@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   History,
   CheckCircle2,
@@ -18,6 +19,7 @@ import {
   Inbox,
   Calendar,
   Download,
+  Loader2,
   Upload,
   Copy,
   Check,
@@ -29,6 +31,7 @@ import {
   removeJobHistory,
   reapplyJob,
   getJobPdfUrl,
+  downloadPdfFile,
   syncJobCalendar,
   pullJobCalendar,
   fetchRawAppliedJobs,
@@ -47,7 +50,20 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
   const [filterQuery, setFilterQuery] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewPdfFilename, setPreviewPdfFilename] = useState<string>('archived_document.pdf');
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (previewPdfUrl) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [previewPdfUrl]);
   const [syncingCalendar, setSyncingCalendar] = useState(false);
   const [pullingCalendar, setPullingCalendar] = useState(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
@@ -192,8 +208,24 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
-  const openPreview = (pdfFile: string) => {
-    setPreviewPdfUrl(getJobPdfUrl(pdfFile));
+  const openPreview = (pdfFile: string, companyName?: string, docType: string = 'document') => {
+    const url = getJobPdfUrl(pdfFile);
+    const companyClean = (companyName || 'Job').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileClean = pdfFile.split('/').pop() || `${docType}.pdf`;
+    setPreviewPdfFilename(`${companyClean}_${fileClean}`);
+    setPreviewPdfUrl(url);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!previewPdfUrl || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      await downloadPdfFile(previewPdfUrl, previewPdfFilename);
+    } catch (err: unknown) {
+      console.error('Save PDF error:', err);
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
 
   // Filter current tab list
@@ -402,7 +434,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                         {job.resume_pdf && (
                           <button
                             type="button"
-                            onClick={() => openPreview(job.resume_pdf!)}
+                            onClick={() => openPreview(job.resume_pdf!, job.company, 'Resume')}
                             className="px-2 py-0.5 rounded-md bg-slate-900/90 hover:bg-sky-950 border border-sky-900/40 hover:border-cyan-500/40 text-[10px] font-mono text-cyan-300 flex items-center space-x-1 transition"
                             title="Preview Resume"
                           >
@@ -413,7 +445,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                         {job.cover_letter_pdf && (
                           <button
                             type="button"
-                            onClick={() => openPreview(job.cover_letter_pdf!)}
+                            onClick={() => openPreview(job.cover_letter_pdf!, job.company, 'Cover_Letter')}
                             className="px-2 py-0.5 rounded-md bg-slate-900/90 hover:bg-sky-950 border border-sky-900/40 hover:border-cyan-500/40 text-[10px] font-mono text-cyan-300 flex items-center space-x-1 transition"
                             title="Preview Cover Letter"
                           >
@@ -424,7 +456,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                         {job.combined_pdf && (
                           <button
                             type="button"
-                            onClick={() => openPreview(job.combined_pdf!)}
+                            onClick={() => openPreview(job.combined_pdf!, job.company, 'Combined')}
                             className="px-2 py-0.5 rounded-md bg-cyan-950/40 hover:bg-cyan-900/40 border border-cyan-500/30 text-[10px] font-mono text-cyan-300 flex items-center space-x-1 transition"
                             title="Preview Combined"
                           >
@@ -474,48 +506,66 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
         </div>
       </section>
 
-      {/* PDF Lightbox Modal */}
-      {previewPdfUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in"
-          onClick={() => setPreviewPdfUrl(null)}
-        >
+      {/* PDF Lightbox Modal (Portaled directly to document.body for standalone PWA & mobile containment fix) */}
+      {previewPdfUrl &&
+        typeof document !== 'undefined' &&
+        createPortal(
           <div
-            className="nexus-glass rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden border border-cyan-500/40 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/80 backdrop-blur-md animate-fade-in pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+            onClick={() => setPreviewPdfUrl(null)}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-sky-900/40 bg-slate-950/60">
-              <div className="flex items-center space-x-2 text-xs font-mono text-cyan-300">
-                <Eye className="w-4 h-4" />
-                <span>ARCHIVED DOCUMENT PREVIEW</span>
+            <div
+              className="nexus-glass rounded-2xl w-full max-w-4xl h-[92vh] sm:h-[88vh] md:h-[85vh] flex flex-col overflow-hidden border border-cyan-500/40 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3 border-b border-sky-900/40 bg-slate-950/60">
+                <div className="flex items-center space-x-2 text-xs font-mono text-cyan-300 min-w-0">
+                  <Eye className="w-4 h-4 shrink-0" />
+                  <span className="truncate">ARCHIVED DOCUMENT PREVIEW</span>
+                </div>
+                <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleDownloadPdf}
+                    disabled={downloadingPdf}
+                    className="flex items-center space-x-1 sm:space-x-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 active:scale-95 text-slate-950 font-mono font-bold text-xs transition shadow-lg shadow-cyan-950/40 disabled:opacity-50"
+                    title="Save PDF directly to device (triggers native Save to Files on mobile)"
+                  >
+                    {downloadingPdf ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    <span className="hidden xs:inline">Save PDF</span>
+                  </button>
+                  <a
+                    href={previewPdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-400 border border-sky-700/40"
+                    title="Open in Full Tab"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPdfUrl(null)}
+                    className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800"
+                    title="Close preview"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <a
-                  href={previewPdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="p-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/60 text-cyan-400 border border-sky-700/40"
-                  title="Open in Full Tab"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setPreviewPdfUrl(null)}
-                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              <iframe
+                src={previewPdfUrl}
+                className="w-full flex-1 bg-white border-0"
+                title="Archived PDF Viewer"
+              />
             </div>
-            <iframe
-              src={previewPdfUrl}
-              className="w-full flex-1 bg-white border-0"
-              title="Archived PDF Viewer"
-            />
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* Copy / Paste JSON Sync Modal */}
       {showJsonModal && (
