@@ -15,6 +15,8 @@ import os
 import sys
 import re
 import json
+import gzip
+import base64
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -111,8 +113,18 @@ def format_sync_event_body(applied_keys: list[str], history_items: list[dict]) -
     skipped_count = sum(1 for h in history_items if (h.get("status") or "").lower() == "skipped")
     total_keys = len(applied_keys)
 
-    # Pretty JSON representation of applied_jobs.json
-    json_payload = json.dumps(applied_keys, indent=2)
+    # Base64-encoded compressed full payload to safely fit within Google Calendar's 8192 char limit
+    full_json_bytes = json.dumps(applied_keys).encode("utf-8")
+    compressed_b64 = base64.b64encode(gzip.compress(full_json_bytes)).decode("ascii")
+
+    # Readable copy-pastable payload capped to stay well under the 8192 char limit
+    readable_keys = applied_keys
+    sample_text = json.dumps(readable_keys, indent=2)
+    truncated_readable = False
+    if len(sample_text) > 4000:
+        readable_keys = applied_keys[:50]
+        sample_text = json.dumps(readable_keys, indent=2)
+        truncated_readable = True
 
     description = f"""====================================================
 ORION COMPANION & AI JOB SEARCH - SYNC STATE
@@ -122,15 +134,35 @@ Total Applied Roles: {applied_count}
 Total Skipped Roles: {skipped_count}
 Total Unique Job Keys: {total_keys}
 
---- COPY-PASTABLE applied_jobs.json ---
-```json
-{json_payload}
+--- COMPACT SYNC PAYLOAD (Base64/Gzip) ---
+```payload
+gz:b64:{compressed_b64}
 ```
---- END COPY-PASTABLE PAYLOAD ---
+
+--- COPY-PASTABLE applied_jobs.json{" (Recent Sample)" if truncated_readable else ""} ---
+```json
+{sample_text}
+```
+--- END PAYLOAD ---
 
 Instructions:
-1. To sync to your server: copy the JSON array between the backticks above and save to applied_jobs.json.
-2. In Orion Dashboard: click 'Pull from Calendar' or paste into 'Import JSON' to trigger instant sync.
+1. Orion Pull from Calendar automatically decodes the full payload.
+2. Individual calendar events are also maintained for each applied job.
+"""
+
+    if len(description) > 8000:
+        description = f"""====================================================
+ORION COMPANION & AI JOB SEARCH - SYNC STATE
+====================================================
+Last Updated: {now_utc.strftime("%Y-%m-%d %H:%M:%S UTC")}
+Total Applied Roles: {applied_count}
+Total Skipped Roles: {skipped_count}
+Total Unique Job Keys: {total_keys}
+
+--- COMPACT SYNC PAYLOAD (Base64/Gzip) ---
+```payload
+gz:b64:{compressed_b64}
+```
 """
 
     return {
@@ -364,8 +396,11 @@ def push_job_sync_to_calendar(service=None) -> dict:
 
 def pull_job_sync_from_calendar(service=None) -> dict:
     """
-    Pulls applied_jobs.json from the single Google Calendar sync event and merges
-    any missing jobs into local applied_jobs.json and job_history.json.
+    Pulls applied jobs from Google Calendar and merges them into local applied_jobs.json and job_history.json.
+    Sources:
+    1. Base64/Gzip compact payload from the single sync event.
+    2. Plain JSON array from the sync event description (with fallback regex to handle partial/truncated JSON).
+    3. Individual Google Calendar events (Applied: ...) across the past 365 days.
     """
     if not service:
         service = get_calendar_service(interactive=False)
@@ -375,37 +410,94 @@ def pull_job_sync_from_calendar(service=None) -> dict:
             "message": "Google Calendar authentication unavailable.",
         }
 
+    recovered_keys = set()
     sync_event = find_sync_calendar_event(service)
-    if not sync_event:
-        return {
-            "status": "error",
-            "message": "No Orion sync event found on Google Calendar.",
-        }
 
-    description = sync_event.get("description", "")
-    # Extract JSON between ```json ... ``` or directly bracketed [...]
-    match = re.search(r"```(?:json)?\s*(\[\s*[\s\S]*?\s*\])\s*```", description)
-    if not match:
-        match = re.search(r"(\[\s*\"[^\"]+\"[\s\S]*?\])", description)
+    if sync_event:
+        description = sync_event.get("description", "")
 
-    if not match:
-        return {
-            "status": "error",
-            "message": "Could not find valid JSON array inside Google Calendar event description.",
-        }
+        # 1. Check for compressed base64 payload: gz:b64:<encoded>
+        b64_match = re.search(r"gz:b64:([A-Za-z0-9+/=]+)", description)
+        if b64_match:
+            try:
+                decompressed = gzip.decompress(base64.b64decode(b64_match.group(1))).decode("utf-8")
+                keys_list = json.loads(decompressed)
+                if isinstance(keys_list, list):
+                    for k in keys_list:
+                        if isinstance(k, str) and k.strip():
+                            recovered_keys.add(k.strip())
+            except Exception as e:
+                print(f"[CalendarJobSync] Notice decompressing payload: {e}")
 
-    raw_json = match.group(1).strip()
+        # 2. Check for plain JSON array in code block: ```json [...] ```
+        if not recovered_keys:
+            json_match = re.search(r"```(?:json)?\s*(\[\s*[\s\S]*?\s*\])\s*```", description)
+            if not json_match:
+                json_match = re.search(r"(\[\s*\"[^\"]+\"[\s\S]*?\])", description)
+
+            if json_match:
+                try:
+                    keys_list = json.loads(json_match.group(1).strip())
+                    if isinstance(keys_list, list):
+                        for k in keys_list:
+                            if isinstance(k, str) and k.strip():
+                                recovered_keys.add(k.strip())
+                except Exception:
+                    pass
+
+        # 3. Fallback for truncated/unclosed JSON: extract all quoted strings following [
+        if not recovered_keys and "[" in description:
+            try:
+                content_after = description[description.find("[") :]
+                end_marker = content_after.find("--- END")
+                if end_marker != -1:
+                    content_after = content_after[:end_marker]
+                extracted = re.findall(r'"([a-zA-Z0-9_\-\.\:\(\)\,\&]+)"', content_after)
+                for k in extracted:
+                    k_clean = k.strip()
+                    if k_clean and not k_clean.startswith("http") and len(k_clean) > 2 and " " not in k_clean:
+                        recovered_keys.add(k_clean)
+            except Exception:
+                pass
+
+    # 4. Enrich & Fallback: Query individual calendar events from Google Calendar
     try:
-        incoming_keys = json.loads(raw_json)
-        if not isinstance(incoming_keys, list):
-            raise ValueError("Parsed JSON payload is not a list.")
+        cal_id = get_target_calendar_id()
+        now = datetime.now(timezone.utc)
+        time_min = (now - timedelta(days=365)).isoformat()
+        page_token = None
+        while True:
+            res = service.events().list(
+                calendarId=cal_id,
+                timeMin=time_min,
+                singleEvents=True,
+                maxResults=250,
+                pageToken=page_token,
+            ).execute()
+            for ev in res.get("items", []):
+                k = ev.get("extendedProperties", {}).get("private", {}).get("job_key")
+                if k:
+                    recovered_keys.add(k.strip().lower())
+                else:
+                    summ = (ev.get("summary") or "").strip()
+                    if summ.startswith("Applied: ") and " - " in summ:
+                        parts = summ[len("Applied: ") :].split(" - ", 1)
+                        if len(parts) == 2:
+                            c, t = parts[0].strip().replace(" ", "_"), parts[1].strip().replace(" ", "_")
+                            recovered_keys.add(f"{c}_{t}".lower())
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
+        print(f"[CalendarJobSync] Notice fetching individual calendar events: {e}")
+
+    if not recovered_keys:
         return {
             "status": "error",
-            "message": f"Failed to parse JSON payload from event: {e}",
+            "message": "Could not find any applied jobs in Google Calendar sync event or individual calendar events.",
         }
 
-    return import_applied_keys(incoming_keys)
+    return import_applied_keys(list(recovered_keys))
 
 
 def import_applied_keys(incoming_keys: list) -> dict:
