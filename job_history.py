@@ -114,15 +114,6 @@ def record_job_history(job_data: dict, status: str = "applied") -> dict:
         applied_list.append(job_key)
         _save_json(APPLIED_FILE, applied_list)
 
-    # Automatically sync state to single Google Calendar event in background thread
-    try:
-        import threading
-        from actions.calendar_job_sync import push_job_sync_to_calendar
-
-        threading.Thread(target=push_job_sync_to_calendar, daemon=True).start()
-    except Exception:
-        pass
-
     return entry
 
 
