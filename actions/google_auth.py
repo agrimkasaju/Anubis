@@ -23,7 +23,10 @@ SCOPES = [
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 TOKEN_FILE = os.path.join(CONFIG_DIR, "google_token.json")
-FALLBACK_TOKEN_FILE = os.path.expanduser("~/.cache/waybar-ycal/token.json")
+FALLBACK_TOKEN_FILES = [
+    os.path.expanduser("~/.config/waybar-ycal/token.json"),
+    os.path.expanduser("~/.cache/waybar-ycal/token.json"),
+]
 CREDENTIALS_CANDIDATES = [
     os.path.join(CONFIG_DIR, "credentials.json"),
     os.path.expanduser("~/.config/waybar-ycal/credentials.json"),
@@ -65,16 +68,18 @@ def get_credentials(interactive: bool = False) -> Optional[Credentials]:
             creds = None
 
     # 2. Check fallback token from waybar-ycal if not in interactive mode
-    if not interactive and os.path.exists(FALLBACK_TOKEN_FILE):
-        try:
-            fallback_creds = Credentials.from_authorized_user_file(FALLBACK_TOKEN_FILE)
-            if fallback_creds and fallback_creds.valid:
-                return fallback_creds
-            if fallback_creds and fallback_creds.expired and fallback_creds.refresh_token:
-                fallback_creds.refresh(Request())
-                return fallback_creds
-        except Exception as e:
-            print(f"[GoogleAuth] Fallback token check failed: {e}")
+    if not interactive:
+        for fallback_file in FALLBACK_TOKEN_FILES:
+            if os.path.exists(fallback_file):
+                try:
+                    fallback_creds = Credentials.from_authorized_user_file(fallback_file)
+                    if fallback_creds and fallback_creds.valid:
+                        return fallback_creds
+                    if fallback_creds and fallback_creds.expired and fallback_creds.refresh_token:
+                        fallback_creds.refresh(Request())
+                        return fallback_creds
+                except Exception as e:
+                    print(f"[GoogleAuth] Fallback token check ({fallback_file}) failed: {e}")
 
     if interactive:
         cred_path = get_credentials_path()
