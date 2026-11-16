@@ -102,9 +102,10 @@ def find_sync_calendar_event(service) -> Optional[dict]:
 
 def format_sync_event_body(applied_keys: list[str], history_items: list[dict]) -> dict:
     """Constructs the single sync event resource with a copy-pastable JSON payload."""
+    now_local = datetime.now().astimezone()
     now_utc = datetime.now(timezone.utc)
-    today_str = now_utc.strftime("%Y-%m-%d")
-    tomorrow_str = (now_utc + timedelta(days=1)).strftime("%Y-%m-%d")
+    today_str = now_local.strftime("%Y-%m-%d")
+    tomorrow_str = (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
 
     applied_count = sum(1 for h in history_items if (h.get("status") or "").lower() == "applied")
     skipped_count = sum(1 for h in history_items if (h.get("status") or "").lower() == "skipped")
@@ -149,71 +150,163 @@ Instructions:
     }
 
 
-def cleanup_legacy_individual_events(service=None) -> int:
+def format_job_event(job: dict) -> dict:
+    """Constructs a Google Calendar event resource dictionary from a job history item."""
+    status = (job.get("status") or "applied").strip().lower()
+    company = (job.get("company") or "Company").strip()
+    title = (job.get("title") or "Role").strip()
+    job_key = (job.get("job_key") or f"{company}_{title}").strip().lower()
+    apply_url = (job.get("apply_url") or "").strip()
+    ts = job.get("timestamp")
+
+    if ts:
+        try:
+            start_dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        except Exception:
+            start_dt = datetime.now(timezone.utc)
+    elif job.get("iso_date"):
+        try:
+            start_dt = datetime.fromisoformat(job["iso_date"])
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            start_dt = datetime.now(timezone.utc)
+    else:
+        start_dt = datetime.now(timezone.utc)
+
+    end_dt = start_dt + timedelta(minutes=30)
+    color_id = "10" if status == "applied" else "8"
+    summary_prefix = "Applied" if status == "applied" else "Skipped"
+
+    description_lines = [
+        f"Company: {company}",
+        f"Role: {title}",
+        f"Status: {status.upper()}",
+        f"Job Key: {job_key}",
+    ]
+    if apply_url and apply_url != "N/A":
+        description_lines.append(f"Posting URL: {apply_url}")
+
+    iso_date = job.get("iso_date") or start_dt.isoformat()
+    description_lines.append(f"Recorded Date: {iso_date}")
+
+    artifacts = []
+    if job.get("resume_pdf"):
+        artifacts.append(f"• Resume: {job['resume_pdf']}")
+    if job.get("cover_letter_pdf"):
+        artifacts.append(f"• Cover Letter: {job['cover_letter_pdf']}")
+    if job.get("combined_pdf"):
+        artifacts.append(f"• Combined PDF: {job['combined_pdf']}")
+
+    if artifacts:
+        description_lines.append("\nTailored Application Artifacts:")
+        description_lines.extend(artifacts)
+
+    return {
+        "summary": f"{summary_prefix}: {company} - {title}",
+        "description": "\n".join(description_lines),
+        "colorId": color_id,
+        "start": {"dateTime": start_dt.isoformat()},
+        "end": {"dateTime": end_dt.isoformat()},
+        "extendedProperties": {
+            "private": {
+                "source": "anubis_ai_job_search",
+                "job_key": job_key,
+                "status": status,
+            }
+        },
+    }
+
+
+def sync_individual_job_events(service=None, limit: int = 200) -> dict:
     """
-    Scans for and purges any legacy individual job events (e.g. 'Applied: ...' or 'Skipped: ...')
-    created by older sync versions to prevent calendar clutter.
+    Synchronizes applied job entries from job_history.json as individual Google Calendar events.
+    Checks existing events to prevent duplicate creation.
     """
     if not service:
         service = get_calendar_service(interactive=False)
     if not service:
-        return 0
+        return {"status": "error", "message": "No calendar service"}
 
     cal_id = get_target_calendar_id()
-    deleted_count = 0
+    history = _load_json(HISTORY_FILE, [])
+    applied_jobs = [h for h in history if (h.get("status") or "").lower() == "applied"]
+
+    existing_keys = set()
+    existing_summaries = set()
     try:
         now = datetime.now(timezone.utc)
-        time_min = (now - timedelta(days=60)).isoformat()
-        time_max = (now + timedelta(days=60)).isoformat()
-
-        res = service.events().list(
-            calendarId=cal_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            maxResults=250,
-        ).execute()
-
-        for ev in res.get("items", []):
-            summary = (ev.get("summary") or "").strip()
-            ext = ev.get("extendedProperties", {}).get("private", {})
-            if (
-                ext.get("source") == "anubis_ai_job_search"
-                or (summary.startswith("Applied: ") and " - " in summary)
-                or (summary.startswith("Skipped: ") and " - " in summary)
-            ) and summary != SYNC_EVENT_SUMMARY:
-                try:
-                    service.events().delete(calendarId=cal_id, eventId=ev["id"]).execute()
-                    deleted_count += 1
-                except Exception:
-                    pass
+        time_min = (now - timedelta(days=90)).isoformat()
+        time_max = (now + timedelta(days=90)).isoformat()
+        page_token = None
+        while True:
+            res = service.events().list(
+                calendarId=cal_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                maxResults=250,
+                pageToken=page_token,
+            ).execute()
+            for item in res.get("items", []):
+                summ = (item.get("summary") or "").strip()
+                if summ:
+                    existing_summaries.add(summ.lower())
+                ext_k = item.get("extendedProperties", {}).get("private", {}).get("job_key")
+                if ext_k:
+                    existing_keys.add(ext_k.lower())
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
     except Exception as e:
-        print(f"[CalendarJobSync] Legacy cleanup notice: {e}")
+        print(f"[CalendarJobSync] Notice fetching existing events: {e}")
 
-    return deleted_count
+    created_count = 0
+    for job in applied_jobs[:limit]:
+        company = (job.get("company") or "").strip()
+        title = (job.get("title") or "").strip()
+        job_key = (job.get("job_key") or f"{company}_{title}").strip().lower()
+        expected_summary = f"applied: {company} - {title}".lower()
+
+        if job_key in existing_keys or expected_summary in existing_summaries:
+            continue
+
+        body = format_job_event(job)
+        try:
+            service.events().insert(calendarId=cal_id, body=body).execute()
+            existing_keys.add(job_key)
+            existing_summaries.add(expected_summary)
+            created_count += 1
+        except Exception as e:
+            print(f"[CalendarJobSync] Error inserting event for {job_key}: {e}")
+
+    return {
+        "status": "success",
+        "new_events_created": created_count,
+        "total_applied_tracked": len(applied_jobs),
+    }
 
 
 def push_job_sync_to_calendar(service=None) -> dict:
     """
-    Pushes local applied_jobs.json and job_history stats to the single Google Calendar sync event.
-    Creates the event if it doesn't exist, or updates it if it does.
-    Also ensures any legacy individual job events are purged.
+    Pushes applied jobs to Google Calendar:
+    1. Creates/updates individual calendar events for applied jobs (with date, time, company, resume links).
+    2. Updates the persistent sync event [Orion Sync] applied_jobs.json with the full state.
     """
     if not service:
         service = get_calendar_service(interactive=False)
     if not service:
         return {
             "status": "error",
-            "message": "Google Calendar authentication unavailable. Ensure config/google_token.json is valid.",
+            "message": "Google Calendar authentication unavailable. Ensure service account or google_token.json is valid.",
         }
 
-    # Clean any legacy clutter first
-    cleanup_legacy_individual_events(service)
+    # 1. Sync individual applied job events
+    ind_res = sync_individual_job_events(service=service)
 
-    # Ensure files and seedings are fresh
+    # 2. Update persistent all-in-one sync event
     get_job_history()
     applied_keys = _load_json(APPLIED_FILE, [])
-    # Normalize keys to list of strings
     clean_keys = []
     for k in applied_keys:
         k_str = k if isinstance(k, str) else k.get("job_key")
@@ -241,8 +334,9 @@ def push_job_sync_to_calendar(service=None) -> dict:
                 "action": "updated",
                 "event_id": event_id,
                 "html_link": html_link,
+                "new_events_created": ind_res.get("new_events_created", 0),
                 "total_keys": len(clean_keys),
-                "message": f"Updated single calendar sync event with {len(clean_keys)} applied jobs.",
+                "message": f"Synced {len(clean_keys)} applied jobs to calendar ({ind_res.get('new_events_created', 0)} new individual events created).",
             }
         else:
             created = service.events().insert(
@@ -257,8 +351,9 @@ def push_job_sync_to_calendar(service=None) -> dict:
                 "action": "created",
                 "event_id": event_id,
                 "html_link": html_link,
+                "new_events_created": ind_res.get("new_events_created", 0),
                 "total_keys": len(clean_keys),
-                "message": f"Created single calendar sync event with {len(clean_keys)} applied jobs.",
+                "message": f"Created single sync event ({ind_res.get('new_events_created', 0)} new individual events created).",
             }
     except Exception as e:
         return {
