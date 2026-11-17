@@ -13,9 +13,30 @@ export interface PendingJob {
   [key: string]: unknown;
 }
 
+export interface CandidateJob {
+  job_key: string;
+  id?: string;
+  company: string;
+  title: string;
+  location?: string;
+  url?: string;
+  terms?: string[];
+  category?: string;
+  date_posted?: number;
+  date_updated?: number;
+  date_display?: string;
+  age_days?: number;
+  age_label?: string;
+  index?: number;
+}
+
 export interface JobPendingResponse {
   pending: boolean;
+  stage?: 'screen_batch' | 'review' | 'screen' | string;
+  status?: string;
   job?: PendingJob;
+  candidates?: CandidateJob[];
+  count?: number;
 }
 
 export interface PipelineStatus {

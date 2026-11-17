@@ -9,11 +9,11 @@ import { SystemStatusCard } from './components/SystemStatusCard';
 import { AuthModal } from './components/AuthModal';
 import { initAuthToken, getStoredToken } from './utils/auth';
 import { fetchPendingJob, fetchPipelineStatus } from './api/client';
-import { PendingJob, PipelineStatus, SystemMeta } from './types/orion';
+import { PendingJob, PipelineStatus, SystemMeta, JobPendingResponse } from './types/orion';
 
 export const App: React.FC = () => {
   const [token, setToken] = useState('');
-  const [pendingJob, setPendingJob] = useState<PendingJob | null>(null);
+  const [pendingBridge, setPendingBridge] = useState<JobPendingResponse | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBridgeLoading, setIsBridgeLoading] = useState(false);
@@ -49,9 +49,9 @@ export const App: React.FC = () => {
     setIsBridgeLoading(true);
 
     try {
-      // 1. Fetch Pending Job
+      // 1. Fetch Pending Job or Batch
       const jobRes = await fetchPendingJob();
-      setPendingJob(jobRes.pending && jobRes.job ? jobRes.job : null);
+      setPendingBridge(jobRes.pending ? jobRes : null);
     } catch {
       // If unauthorized, job bridge remains null
     } finally {
@@ -74,7 +74,7 @@ export const App: React.FC = () => {
     refreshFeeds();
     const interval = setInterval(() => {
       refreshFeeds();
-    }, 8000);
+    }, 4000);
     return () => clearInterval(interval);
   }, [refreshFeeds, token]);
 
@@ -100,7 +100,7 @@ export const App: React.FC = () => {
         {/* Left Column (7 cols on desktop): Job Automation & AI Search */}
         <div className="md:col-span-7 flex flex-col space-y-5 md:space-y-6">
           <JobBridgeCard
-            pendingJob={pendingJob}
+            pendingBridge={pendingBridge}
             isLoading={isBridgeLoading}
             onRefresh={refreshFeeds}
           />

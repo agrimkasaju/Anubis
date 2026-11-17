@@ -24,6 +24,42 @@ export async function resolveJob(approved: boolean): Promise<{ status: string; a
   return res.json();
 }
 
+export async function selectCandidate(jobKey: string | number): Promise<{ status: string; candidate?: any }> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/select?token=${encodeURIComponent(token)}` : '/api/job/select';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ job_key: jobKey }),
+  });
+  if (!res.ok) throw new Error(`Failed to select candidate: ${res.statusText}`);
+  return res.json();
+}
+
+export async function skipCandidate(jobKey: string): Promise<{ status: string }> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/skip?token=${encodeURIComponent(token)}` : '/api/job/skip';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ job_key: jobKey }),
+  });
+  if (!res.ok) throw new Error(`Failed to skip candidate: ${res.statusText}`);
+  return res.json();
+}
+
+export async function skipAllCandidates(): Promise<{ status: string }> {
+  const token = getStoredToken();
+  const url = token ? `/api/job/skip?token=${encodeURIComponent(token)}` : '/api/job/skip';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ skip_all: true }),
+  });
+  if (!res.ok) throw new Error(`Failed to skip batch: ${res.statusText}`);
+  return res.json();
+}
+
 export async function fetchPipelineStatus(): Promise<PipelineStatus> {
   const token = getStoredToken();
   const url = token ? `/api/job/status?token=${encodeURIComponent(token)}` : '/api/job/status';
