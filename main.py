@@ -888,8 +888,33 @@ class JarvisLive:
                 import subprocess
 
                 action = args.get("action", "").lower()
+                target = args.get("target") or args.get("candidate") or args.get("index") or args.get("company")
 
-                if action in ["approve", "yes", "send", "submit", "process"]:
+                state = bridge.get_current_state()
+                stage = state.get("stage") if state else None
+
+                if stage == "screen_batch":
+                    if action in ["skip_all", "next", "dismiss"]:
+                        bridge.skip_all_candidates()
+                        result = "Skipped all remaining candidate positions in this batch, sir."
+                    elif action in ["skip", "reject", "pass", "no"]:
+                        if target:
+                            ok = bridge.skip_candidate(str(target))
+                            result = f"Skipped candidate {target}, sir." if ok else f"Could not find candidate {target} to skip, sir."
+                        else:
+                            bridge.skip_all_candidates()
+                            result = "Skipped all candidates in this batch, sir."
+                    else:
+                        ident = target or 1
+                        chosen = bridge.select_candidate(ident)
+                        if chosen:
+                            comp = chosen.get("company", "Target Company")
+                            title = chosen.get("title", "Position")
+                            result = f"Understood, sir. Starting to scrape and tailor your application for {comp} — {title}. I will notify you once documents are compiled."
+                        else:
+                            result = f"Sir, I could not identify candidate '{ident}' from the current batch."
+
+                elif action in ["approve", "yes", "send", "submit", "process"]:
                     job = bridge.get_pending_job()
                     if job:
                         stage = job.get("stage", "review")

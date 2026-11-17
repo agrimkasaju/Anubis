@@ -106,6 +106,37 @@ def ai_job_search_action(parameters: dict = None, player=None, speak=None) -> st
                 player.write_log(f"[AI Job Search] ❌ {err_msg}")
             return f"Sir, I encountered an error interacting with Google Calendar: {e}"
 
+    # Handle Status / Pending query
+    if action in ("status", "check", "pending", "listings", "batch") or parameters.get("check_status"):
+        try:
+            from job_bridge import bridge
+            state = bridge.get_current_state()
+            if state and state.get("stage") == "screen_batch":
+                candidates = state.get("candidates", [])
+                fresh_count = sum(1 for c in candidates if (c.get("age_days") or 999) <= 3)
+                top_comps = ", ".join(c.get("company", "") for c in candidates[:3] if c.get("company"))
+                open_dashboard()
+                return f"Sir, I have {len(candidates)} unreviewed postings ready on your dashboard, including {fresh_count} from the past three days. Top matches include {top_comps}."
+            elif state and state.get("stage") == "review":
+                job = state.get("job", {})
+                open_dashboard()
+                return f"Sir, a tailored application for {job.get('company', 'a target role')} is ready for your review on the dashboard."
+        except Exception:
+            pass
+
+    # Handle Candidate Selection via Voice
+    if action in ("select", "choose", "tailor") and (target or parameters.get("candidate") or company):
+        try:
+            from job_bridge import bridge
+            ident = target or parameters.get("candidate") or company
+            chosen = bridge.select_candidate(ident)
+            if chosen:
+                open_dashboard()
+                return f"Understood, sir. Starting to scrape and tailor your application for {chosen.get('company', 'the company')} — {chosen.get('title', 'Position')}."
+            return f"Sir, I could not find candidate '{ident}' in the active batch."
+        except Exception as e:
+            return f"Error selecting candidate: {e}"
+
     if player and hasattr(player, "write_log"):
         player.write_log("[AI Job Search] Pulling up browser dashboard...")
 

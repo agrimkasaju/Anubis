@@ -192,7 +192,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <p class="text-zinc-600 text-xs mt-1">When the framework compiles an application, review actions will appear here.</p>
         </div>
 
-        <!-- Pending State -->
+        <!-- Batch State (Multi-Candidate Screening) -->
+        <div id="job-batch-state" class="hidden pt-3 space-y-3">
+          <div class="flex items-center justify-between bg-zinc-950/70 border border-zinc-800/80 rounded-xl px-3 py-2 text-xs">
+            <div class="flex items-center space-x-2">
+              <span class="text-cyan-400 font-semibold" id="batch-count-label">10 Listings</span>
+              <span class="text-zinc-500">· Ready to screen</span>
+            </div>
+            <button onclick="skipAllCandidates()" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-[11px] font-medium transition">
+              ↻ Skip All & Load Next
+            </button>
+          </div>
+
+          <div id="job-candidates-list" class="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+            <!-- Populated dynamically via JS -->
+          </div>
+        </div>
+
+        <!-- Pending State (Single Application Review) -->
         <div id="job-pending-state" class="hidden pt-4 space-y-4">
           <div id="job-card-header" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 transition-colors">
             <div id="job-stage-badge" class="text-xs font-mono uppercase tracking-wider text-amber-400 font-semibold">Ready for Review</div>
@@ -582,6 +599,70 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       } catch (err) {}
     }
 
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    async function selectCandidate(jobKey) {
+      try {
+        const btn = document.getElementById(`btn-tailor-${jobKey}`);
+        if (btn) {
+          btn.innerHTML = `<span class="animate-spin inline-block mr-1">↻</span> Tailoring...`;
+          btn.disabled = true;
+        }
+        const res = await fetch('/api/job/select', {
+          method: 'POST',
+          headers: { ...authHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_key: jobKey })
+        });
+        const out = await res.json();
+        if (!res.ok) {
+          alert(out.error || "Failed to select candidate");
+        }
+        pollJobBridge();
+      } catch (err) {
+        alert("Error selecting candidate: " + err);
+      }
+    }
+
+    async function skipCandidate(jobKey) {
+      try {
+        const row = document.getElementById(`candidate-row-${jobKey}`);
+        if (row) {
+          row.style.opacity = '0.2';
+          row.style.pointerEvents = 'none';
+        }
+        await fetch('/api/job/skip', {
+          method: 'POST',
+          headers: { ...authHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_key: jobKey })
+        });
+        pollJobBridge();
+      } catch (err) {
+        console.error("Error skipping candidate:", err);
+      }
+    }
+
+    async function skipAllCandidates() {
+      if (!confirm("Skip all remaining candidate listings in this batch?")) return;
+      try {
+        await fetch('/api/job/skip', {
+          method: 'POST',
+          headers: { ...authHeader(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skip_all: true })
+        });
+        pollJobBridge();
+      } catch (err) {
+        console.error("Error skipping batch:", err);
+      }
+    }
+
     // Polling Job Bridge
     async function pollJobBridge() {
       try {
@@ -593,33 +674,91 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         const data = await res.json();
         const pill = document.getElementById('bridge-status-pill');
         const emptyState = document.getElementById('job-empty-state');
+        const batchState = document.getElementById('job-batch-state');
         const pendingState = document.getElementById('job-pending-state');
 
-        if (data && data.pending && data.job) {
-          const isScreening = (data.job.stage === 'screen');
+        if (data && data.pending) {
+          if (data.stage === 'screen_batch') {
+            emptyState.classList.add('hidden');
+            pendingState.classList.add('hidden');
+            batchState.classList.remove('hidden');
 
-          if (isScreening) {
-            pill.innerText = '● Inspect URL';
+            const candidates = data.candidates || [];
+            pill.innerText = `● ${candidates.length} Candidate${candidates.length === 1 ? '' : 's'}`;
             pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-semibold';
-            document.getElementById('job-card-header').className = 'bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-3.5 transition-colors';
-            document.getElementById('job-stage-badge').innerText = '🔍 Step 1: Inspect URL & Posting';
-            document.getElementById('job-stage-badge').className = 'text-xs font-mono uppercase tracking-wider text-cyan-400 font-semibold';
-            document.getElementById('job-pdf-docs').classList.add('hidden');
-            document.getElementById('job-btn-approve').innerText = '⚡ Scrape & Tailor Application';
-            document.getElementById('job-btn-skip').innerText = '✕ Skip Posting';
-            document.getElementById('job-tip').innerText = 'Click "Open Job Posting ↗" above to check requirements before tailoring.';
-          } else {
-            pill.innerText = '● Pending Approval';
-            pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold';
-            document.getElementById('job-card-header').className = 'bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 transition-colors';
-            document.getElementById('job-stage-badge').innerText = '📄 Step 2: Review Generated Application';
-            document.getElementById('job-stage-badge').className = 'text-xs font-mono uppercase tracking-wider text-amber-400 font-semibold';
-            document.getElementById('job-pdf-docs').classList.remove('hidden');
-            document.getElementById('job-btn-approve').innerText = '✅ Approve & Open';
-            document.getElementById('job-btn-skip').innerText = '✕ Skip Job';
-            document.getElementById('job-tip').innerText = "Tip: You can preview the PDFs above, or use Orion's voice command to approve/skip.";
+            const countLabel = document.getElementById('batch-count-label');
+            if (countLabel) {
+              countLabel.innerText = `${candidates.length} Listing${candidates.length === 1 ? '' : 's'}`;
+            }
 
-            // Update PDF download links
+            const listEl = document.getElementById('job-candidates-list');
+            listEl.innerHTML = candidates.map((c, i) => {
+              const ageDays = typeof c.age_days === 'number' ? c.age_days : 999;
+              let badgeColor = 'bg-zinc-800 text-zinc-400 border-zinc-700';
+              if (ageDays <= 3) {
+                badgeColor = 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+              } else if (ageDays <= 10) {
+                badgeColor = 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+              }
+
+              const safeKey = escapeHtml(c.job_key || `${c.company}_${c.title}`);
+              const safeCompany = escapeHtml(c.company || 'Unknown');
+              const safeTitle = escapeHtml(c.title || 'Unknown Role');
+              const safeLoc = escapeHtml(c.location || 'Remote/Anywhere');
+              const safeDate = escapeHtml(c.date_display || '');
+              const safeAge = escapeHtml(c.age_label || 'Recent');
+              const url = c.url || '#';
+
+              return `
+                <div id="candidate-row-${safeKey}" class="p-3 bg-zinc-950/70 hover:bg-zinc-950 border border-zinc-800/80 hover:border-zinc-700 rounded-xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div class="flex items-start sm:items-center space-x-3 min-w-0">
+                    <span class="w-6 h-6 rounded-md bg-zinc-800 text-zinc-300 font-mono text-xs flex items-center justify-center font-bold shrink-0">#${c.index || (i + 1)}</span>
+                    <div class="min-w-0">
+                      <div class="flex items-center space-x-2 flex-wrap">
+                        <span class="font-bold text-sm text-white truncate max-w-[260px]">${safeTitle}</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badgeColor} whitespace-nowrap">${safeAge}</span>
+                        ${safeDate ? `<span class="text-[10px] text-zinc-500 hidden md:inline">(${safeDate})</span>` : ''}
+                      </div>
+                      <div class="text-xs text-zinc-400 flex items-center space-x-1.5 mt-0.5">
+                        <span class="text-zinc-300 font-medium">${safeCompany}</span>
+                        <span class="text-zinc-600">·</span>
+                        <span class="text-zinc-500 truncate max-w-[180px]">${safeLoc}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center space-x-1.5 shrink-0 self-end sm:self-center">
+                    <a href="${url}" target="_blank" class="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs border border-zinc-700/60 transition flex items-center space-x-1">
+                      <span>↗</span><span>View</span>
+                    </a>
+                    <button id="btn-tailor-${safeKey}" onclick="selectCandidate('${safeKey}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs transition shadow-sm flex items-center space-x-1">
+                      <span>⚡</span><span>Tailor</span>
+                    </button>
+                    <button onclick="skipCandidate('${safeKey}')" title="Skip this job" class="px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 text-xs border border-zinc-700/60 transition">
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              `;
+            }).join('');
+            return;
+          }
+
+          // Single Review stage
+          if (batchState) batchState.classList.add('hidden');
+          emptyState.classList.add('hidden');
+          pendingState.classList.remove('hidden');
+
+          pill.innerText = '● Pending Review';
+          pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold';
+          document.getElementById('job-card-header').className = 'bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 transition-colors';
+          document.getElementById('job-stage-badge').innerText = '📄 Step 2: Review Generated Application';
+          document.getElementById('job-stage-badge').className = 'text-xs font-mono uppercase tracking-wider text-amber-400 font-semibold';
+          document.getElementById('job-pdf-docs').classList.remove('hidden');
+          document.getElementById('job-btn-approve').innerText = '✅ Approve & Open';
+          document.getElementById('job-btn-skip').innerText = '✕ Skip Job';
+          document.getElementById('job-tip').innerText = "Tip: You can preview the PDFs above, or use Orion's voice command to approve/skip.";
+
+          if (data.job) {
             const tParam = token ? `&token=${encodeURIComponent(token)}` : '';
             const comp = data.job.company || 'Application';
             const cvFile = data.job.resume_pdf || data.job.cv_pdf || `${comp}_Resume.pdf`;
@@ -629,19 +768,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             document.getElementById('pdf-resume-link').href = `/api/job/pdf?file=${encodeURIComponent(cvFile)}${tParam}`;
             document.getElementById('pdf-cl-link').href = `/api/job/pdf?file=${encodeURIComponent(clFile)}${tParam}`;
             document.getElementById('pdf-combined-link').href = `/api/job/pdf?file=${encodeURIComponent(combFile)}${tParam}`;
+
+            document.getElementById('job-title').innerText = data.job.title || 'Unknown Role';
+            document.getElementById('job-company').innerText = data.job.company || 'Unknown Company';
+            const link = document.getElementById('job-link');
+            link.href = data.job.apply_url || '#';
           }
-
-          emptyState.classList.add('hidden');
-          pendingState.classList.remove('hidden');
-
-          document.getElementById('job-title').innerText = data.job.title || 'Unknown Role';
-          document.getElementById('job-company').innerText = data.job.company || 'Unknown Company';
-          const link = document.getElementById('job-link');
-          link.href = data.job.apply_url || '#';
         } else {
           pill.innerText = '● Idle';
           pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400';
           emptyState.classList.remove('hidden');
+          if (batchState) batchState.classList.add('hidden');
           pendingState.classList.add('hidden');
         }
       } catch (err) {
@@ -1808,9 +1945,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         # API: Check Pending Job Bridge
         if path == "/api/job/pending":
-            pending = bridge.get_pending_job()
-            if pending:
-                # Ensure alias keys exist so both frontend & backend conventions work seamlessly
+            state = bridge.get_current_state()
+            if not state or state.get("status") not in ("pending", "selected"):
+                self._send_json({"pending": False})
+                return
+
+            stage = state.get("stage", "review")
+            if stage == "screen_batch":
+                candidates = state.get("candidates") or []
+                self._send_json({
+                    "pending": True,
+                    "stage": "screen_batch",
+                    "status": state.get("status"),
+                    "candidates": candidates,
+                    "count": len(candidates),
+                })
+                return
+
+            if stage == "review":
+                pending = state.get("job") or {}
                 if "cv_pdf" in pending and "resume_pdf" not in pending:
                     pending["resume_pdf"] = pending["cv_pdf"]
                 if "cl_pdf" in pending and "cover_letter_pdf" not in pending:
@@ -1819,9 +1972,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     pending["cv_pdf"] = pending["resume_pdf"]
                 if "cover_letter_pdf" in pending and "cl_pdf" not in pending:
                     pending["cl_pdf"] = pending["cover_letter_pdf"]
-                self._send_json({"pending": True, "job": pending})
-            else:
-                self._send_json({"pending": False})
+                self._send_json({
+                    "pending": True,
+                    "stage": "review",
+                    "status": state.get("status"),
+                    "job": pending,
+                })
+                return
+
+            self._send_json({"pending": False})
             return
 
         # API: Query Headless Job Search Pipeline Status
@@ -2178,6 +2337,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(content_len).decode("utf-8"))
             except Exception:
                 pass
+
+        # API: Select Candidate from Batch
+        if path == "/api/job/select":
+            job_key = body.get("job_key") or body.get("index") or body.get("company")
+            if not job_key:
+                self._send_json({"error": "Missing job_key or index."}, status=400)
+                return
+            chosen = bridge.select_candidate(job_key)
+            if chosen:
+                self._send_json({"status": "selected", "candidate": chosen})
+            else:
+                self._send_json({"error": f"Candidate '{job_key}' not found or already selected."}, status=404)
+            return
+
+        # API: Skip Candidate or Skip All Batch
+        if path == "/api/job/skip":
+            if body.get("skip_all"):
+                bridge.skip_all_candidates()
+                self._send_json({"status": "skipped_all"})
+                return
+            job_key = body.get("job_key")
+            if not job_key:
+                self._send_json({"error": "Missing job_key."}, status=400)
+                return
+            ok = bridge.skip_candidate(job_key)
+            self._send_json({"status": "skipped", "job_key": job_key, "success": ok})
+            return
 
         # API: Resolve Job Bridge (Approve / Skip)
         if path == "/api/job/resolve":
