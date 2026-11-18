@@ -677,6 +677,26 @@ TOOL_DECLARATIONS = [
             "required": ["symbol"]
         }
     },
+    {
+        "name": "get_system_vitals",
+        "description": (
+            "Fetches real-time host system telemetry and hardware vitals on demand, "
+            "including CPU utilization, RAM usage, GPU load/VRAM/temperature, "
+            "CPU temperature, and overall performance status. "
+            "Call this tool whenever the user asks about system status, vitals, hardware performance, loads, or temps."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "focus": {
+                    "type": "STRING",
+                    "description": "Optional focus area: 'all', 'cpu', 'memory', 'gpu', or 'thermals'. Defaults to 'all'.",
+                    "enum": ["all", "cpu", "memory", "gpu", "thermals"]
+                }
+            },
+            "required": []
+        }
+    },
 ]
 
 
@@ -1048,6 +1068,14 @@ class JarvisLive:
 
                 r = await loop.run_in_executor(None, lambda: get_stock_analysis(symbol))
                 result = r or f"No data returned for {symbol}."
+            elif name == "get_system_vitals":
+                from actions.vitals import collect_system_vitals
+                focus = args.get("focus", "all")
+                print(f"📊 [ANUBIS] Fetching on-demand system vitals (focus: {focus})...")
+                vitals_data = await loop.run_in_executor(None, lambda: collect_system_vitals(focus=focus))
+                if hasattr(self.ui, "show_vitals_toast"):
+                    self.ui.show_vitals_toast(vitals_data)
+                result = vitals_data.get("speech_summary", "System vitals retrieved.")
             elif name == "ai_job_search":
                 from actions.ai_job_search import ai_job_search_action
                 r = await loop.run_in_executor(

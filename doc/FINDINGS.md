@@ -1,10 +1,20 @@
-# Findings: Anubis Dynamic Reminders & Flight Tracking
+# Findings & Architectural Evidence
 
-### Discovery 1: Google Calendar Recurrence (RRULE)
-- Google Calendar API supports standard recurrence strings: `"recurrence": ["RRULE:FREQ=DAILY;UNTIL=YYYYMMDDTHHMMSSZ"]`.
-- When querying events with `singleEvents=True`, Google Calendar expands the recurring series into individual daily items for `waybar-ycal` and Anubis.
-- When deleting with `singleEvents=False`, deleting the master recurring event removes all occurrences across the entire range cleanly.
+## Target Baseline
+- Orion logo is defined in `Anubis/frontend/src/components/OrionLogo.tsx` and `~/.config/waybar/icons/orion.svg` with ViewBox `0 0 100 140`.
+- Symmetric contours: `ORION_PATH_LEFT` and `ORION_PATH_RIGHT` ($X \leftarrow 100 - X$).
+- Legacy UI `Anubis/ui.py` uses 2D `HudCanvas` with concentric circles and continuous 1.5s/2.0s polling of CPU/RAM/GPU via `_SysMetrics`.
+- Current window layout has 3 columns: Left (130px vitals), Center (HudCanvas), Right (280px logs/upload/input).
 
-### Discovery 2: Safeguarded Event Deletion
-- `delete_reminder` is restricted with `reminders_only=True` to match events containing `"Reminder:"` or `"Flight Tracker:"`. This prevents accidental deletion of non-reminder personal events (such as booked flights or meetings).
-- Systemd user timer tracking: Timers are registered in `config/scheduled_reminders.json` and stopped via `systemctl --user stop <unit>.timer`.
+## Wayland & OpenGL Technical Constraints
+- On Pop!_OS COSMIC (`cosmic-comp`), transparent OpenGL widgets require explicit `QSurfaceFormat` with `alphaBufferSize = 8` before `QApplication` instantiation.
+- Wayland requires premultiplied alpha: `glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`.
+- Client-side window movement on Wayland requires calling `QWindow.startSystemMove()` because standard `move()` calls are restricted by Wayland security protocols.
+- **GL_POINT_SPRITE & Mesa/Wayland Behavior:** In OpenGL Core Profile 3.3 under Mesa/Linux Wayland, point sprites require explicit `glEnable(0x8861)` (GL_POINT_SPRITE) along with `glEnable(GL_PROGRAM_POINT_SIZE)` to populate `gl_PointCoord`. If not enabled, `gl_PointCoord` defaults to `(0, 0)`, causing circular discard conditions like `r2 > 1.0` to discard all fragments. Resilient shader logic checks for `(0,0)` to ensure cross-driver fallback.
+- **Transparent Child Widgets for Mouse Event Passing:** Setting `setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)` on `_GLVisageWidget` and `_SoftwareVisageWidget` ensures that parent container `OrionParticleCanvas` receives all pointer events directly, enabling pristine gesture disambiguation between drag (`startSystemMove`) and quick click (`visageClicked`).
+- **Spherical Geometry & Circular Window Masking:** Setting `setMask(QRegion(QRect(0, 0, 300, 300), QRegion.RegionType.Ellipse))` on `MainWindow` in compact orb mode physically clips the window surface at the compositor level, completely removing any rectangular outer edges, drop shadows, or rectangular borders. When expanding to HUD mode, calling `clearMask()` cleanly restores full rectangular rendering.
+- **Dark Logo Background Color Harmonization:** Derived from Orion dashboard assets (`favicon.svg`, `orion_dashboard.py`), the darker background color palette comprises deep midnight cyber-navy (`#06090F`, normalized RGB `vec3(0.024, 0.055, 0.095)`) with dark cyan-navy luminescence (`#0A2540` / `#0B324D`, `vec3(0.042, 0.165, 0.260)`). Using this palette for the 1,700 volumetric body and Fibonacci shell particles creates a cohesive 3D spherical body, against which the electric cyan `#59D4E6` visage contours stand out sharply.
+- **QPalette & Fusion Dark Mode Theming for Qt Standard Dialogs:** Under Pop!_OS COSMIC, `QFileDialog` uses the Fusion widget style which defaults to black text (`#000000`) on `QPalette.ColorRole.Base`. When the desktop environment applies a dark window background, standard file list views render black text on a black background. Explicitly populating `setup_dark_app_theme(app)` with high-contrast palette values (`Base`: `#08101a`, `Window`: `#0b1522`, `Text`/`WindowText`: `#e0f6fc`, `PlaceholderText`: `#5ab8cc`, `Highlight`: `#00b4e6`) restores crisp, readable delegates across all standard views.
+- **Wayland Window Geometry Retention Across Modal Dialogs:** When modal file dialogs are parented to nested layout child widgets, modal open/close transitions trigger Wayland `cosmic-comp` `WindowStateChange` and `ActivationChange` events that clamp or squish the parent window geometry into square boundaries (~300x300 or ~500x500). Reparenting the dialog to `parent_win = self.window()` and asserting post-dialog minimum size (`700, 480`) and geometry (`820, 540`) prevents window squishing.
+- **Header Minimize vs Orb Collapse Semantics:** Standard `showMinimized()` drops the window surface to the OS taskbar, leaving unminimized restoration vulnerable to compositor state desynchronization. Connecting header minimize (`–`) directly to `set_hud_expanded(False)` ensures the user action faithfully executes the intended collapse back to the compact spherical orb.
+
