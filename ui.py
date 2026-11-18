@@ -903,6 +903,7 @@ class SetupOverlay(QWidget):
 class MainWindow(QMainWindow):
     _log_sig   = pyqtSignal(str)
     _state_sig = pyqtSignal(str)
+    _vitals_sig = pyqtSignal(dict)
     wake_signal = pyqtSignal()
 
     def __init__(self, face_path: str = ""):
@@ -982,6 +983,7 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        self._vitals_sig.connect(self._vitals_toast.display)
         self.wake_signal.connect(self.bring_to_front)
 
         self._overlay: SetupOverlay | None = None
@@ -1023,21 +1025,29 @@ class MainWindow(QMainWindow):
         self._hud_expanded = expanded
         if expanded:
             self._pending_collapse_to_orb = False
+            self._visage_container.setMinimumSize(260, 260)
+            self._visage_container.setMaximumSize(16777215, 16777215)
+            self.hud.setMinimumSize(260, 260)
+            self.hud.setMaximumSize(16777215, 16777215)
+            self.setMinimumSize(820, 540)
+            self.setMaximumSize(16777215, 16777215)
             self._root_layout.setContentsMargins(8, 6, 8, 8)
             self._root_layout.setSpacing(6)
-            self.setMaximumSize(16777215, 16777215)
-            self.setMinimumSize(700, 480)
+            self._body_layout.setContentsMargins(0, 0, 0, 0)
+            self._body_layout.setSpacing(8)
             self._header.show()
             self._right_panel.show()
             if not self.isMaximized() and not self.isFullScreen():
                 self.resize(820, 540)
+            QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
+            self._apply_compact_orb_geometry()
             if self.isMaximized() or self.isFullScreen():
-                # On Wayland, unmaximize / exit fullscreen asynchronously before applying compact orb limits
                 self._pending_collapse_to_orb = True
                 self.showNormal()
+                QTimer.singleShot(50, self._apply_compact_orb_geometry)
+                QTimer.singleShot(150, self._apply_compact_orb_geometry)
                 return
-            self._apply_compact_orb_geometry()
 
     def _apply_compact_orb_geometry(self):
         self._pending_collapse_to_orb = False
@@ -1046,26 +1056,34 @@ class MainWindow(QMainWindow):
         self._vitals_toast.hide()
         self._root_layout.setContentsMargins(0, 0, 0, 0)
         self._root_layout.setSpacing(0)
-        self.setMinimumSize(260, 260)
-        self.setMaximumSize(360, 360)
-        self.resize(300, 300)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(0)
+        self._visage_container.setFixedSize(300, 300)
+        self.hud.setFixedSize(300, 300)
+        self.setFixedSize(300, 300)
 
     def toggle_hud_state(self):
         self.set_hud_expanded(not self._hud_expanded)
 
     def show_vitals_toast(self, data: dict):
-        self._vitals_toast.display(data)
+        self._vitals_sig.emit(data)
         summary = data.get("speech_summary", "")
         if summary:
             self._log.append_log(f"SYS: {summary}")
 
     def _toggle_maximize(self):
         if self.isMaximized() or self.isFullScreen():
-            self.showNormal()
-            if self._hud_expanded:
-                self.resize(820, 540)
-            else:
+            if not self._hud_expanded:
                 self._apply_compact_orb_geometry()
+                self.showNormal()
+                QTimer.singleShot(50, self._apply_compact_orb_geometry)
+                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            else:
+                self.setMinimumSize(820, 540)
+                self.setMaximumSize(16777215, 16777215)
+                self.showNormal()
+                self.resize(820, 540)
+                QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
@@ -1073,11 +1091,17 @@ class MainWindow(QMainWindow):
 
     def _toggle_fullscreen(self):
         if self.isFullScreen() or self.isMaximized():
-            self.showNormal()
-            if self._hud_expanded:
-                self.resize(820, 540)
-            else:
+            if not self._hud_expanded:
                 self._apply_compact_orb_geometry()
+                self.showNormal()
+                QTimer.singleShot(50, self._apply_compact_orb_geometry)
+                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            else:
+                self.setMinimumSize(820, 540)
+                self.setMaximumSize(16777215, 16777215)
+                self.showNormal()
+                self.resize(820, 540)
+                QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
@@ -1085,11 +1109,17 @@ class MainWindow(QMainWindow):
 
     def _handle_escape(self):
         if self.isFullScreen() or self.isMaximized():
-            self.showNormal()
-            if self._hud_expanded:
-                self.resize(820, 540)
-            else:
+            if not self._hud_expanded:
                 self._apply_compact_orb_geometry()
+                self.showNormal()
+                QTimer.singleShot(50, self._apply_compact_orb_geometry)
+                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            else:
+                self.setMinimumSize(820, 540)
+                self.setMaximumSize(16777215, 16777215)
+                self.showNormal()
+                self.resize(820, 540)
+                QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         elif self._hud_expanded:
             self.set_hud_expanded(False)
 
@@ -1160,29 +1190,32 @@ class MainWindow(QMainWindow):
                     listener.pause_listening()
 
                 if not self.isMaximized() and not self.isFullScreen():
-                    if getattr(self, '_pending_collapse_to_orb', False):
+                    if getattr(self, '_pending_collapse_to_orb', False) or not self._hud_expanded:
                         self._apply_compact_orb_geometry()
                     elif self._hud_expanded:
+                        self.setMinimumSize(820, 540)
                         self.setMaximumSize(16777215, 16777215)
-                        self.setMinimumSize(700, 480)
                         self._header.show()
                         self._right_panel.show()
                         QTimer.singleShot(50, lambda: self.resize(820, 540))
-                    else:
-                        self._apply_compact_orb_geometry()
+                        QTimer.singleShot(120, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
             # Guard against Wayland compositor transient configure events collapsing expanded HUD
             if event.size().width() < 700 or event.size().height() < 480:
+                self.setMinimumSize(820, 540)
                 self.setMaximumSize(16777215, 16777215)
-                self.setMinimumSize(700, 480)
                 QTimer.singleShot(10, lambda: self.resize(820, 540))
         elif not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
             # Guard against Wayland compositor leaving compact orb expanded to pre-maximize size (e.g. 820x540)
-            if event.size().width() > 360 or event.size().height() > 360:
-                self._apply_compact_orb_geometry()
+            if (event.size().width() != 300 or event.size().height() != 300) and not getattr(self, '_in_compact_fix', False):
+                self._in_compact_fix = True
+                try:
+                    self._apply_compact_orb_geometry()
+                finally:
+                    self._in_compact_fix = False
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390
             cw = self.centralWidget()
@@ -1524,8 +1557,12 @@ class JarvisUI:
     def show_vitals_toast(self, data: dict):
         self._win.show_vitals_toast(data)
 
+    @property
+    def wake_signal(self):
+        return self._win.wake_signal
+
     def bring_to_front(self):
-        self._win.bring_to_front()
+        self._win.wake_signal.emit()
 
     def toggle_hud_state(self):
         self._win.toggle_hud_state()

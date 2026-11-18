@@ -293,5 +293,58 @@ def test_toggle_maximize_from_fullscreen_restores_cleanly(qapp):
     win.close()
 
 
+def test_compact_orb_geometry_locks_bounds_and_zeroes_spacing(qapp):
+    win = MainWindow()
+    win.show()
+    # In compact mode, MainWindow, _visage_container, and hud must be locked to exactly 300x300
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+    assert win._visage_container.width() == 300
+    assert win._visage_container.height() == 300
+    assert win.hud.width() == 300
+    assert win.hud.height() == 300
+    assert win._body_layout.spacing() == 0
+    assert win._root_layout.spacing() == 0
+
+    # Expand to HUD
+    win.set_hud_expanded(True)
+    assert win._hud_expanded is True
+    assert win.width() >= 700
+    assert win._body_layout.spacing() == 8
+    assert win._root_layout.spacing() == 6
+
+    # Re-collapse to compact mode
+    win.set_hud_expanded(False)
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+    assert win._visage_container.width() == 300
+    assert win._visage_container.height() == 300
+    assert win.hud.width() == 300
+    assert win.hud.height() == 300
+    assert win._body_layout.spacing() == 0
+    assert win._root_layout.spacing() == 0
+    win.close()
+
+
+def test_jarvis_ui_thread_safe_wake_signal(qapp):
+    jui = JarvisUI(face_path="", minimized=True)
+    assert hasattr(jui, "wake_signal")
+
+    # Expand window first
+    jui.set_hud_expanded(True)
+    assert jui._win._hud_expanded is True
+
+    # Emitting wake_signal resets to compact orb via queued connection
+    jui.wake_signal.emit()
+    qapp.processEvents()
+    assert jui._win._hud_expanded is False
+    assert jui._win.width() == 300
+    assert jui._win.height() == 300
+    jui._win.close()
+
+
+
 
 

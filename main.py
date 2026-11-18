@@ -798,9 +798,14 @@ class JarvisLive:
                     # --- AUTOMATIC WAKE-UP SEQUENCE ---
                     print(f"[ORION] 📢 Job received for {company} (stage: {stage})! Forcing UI wake-up...")
                     
-                    # Trigger the UI to pop up from the background
+                    # Trigger the UI to pop up from the background safely across threads
                     if hasattr(self, 'ui'):
-                        if hasattr(self.ui, 'bring_to_front'):
+                        if hasattr(self.ui, 'wake_signal'):
+                            try:
+                                self.ui.wake_signal.emit()
+                            except Exception:
+                                pass
+                        elif hasattr(self.ui, 'bring_to_front'):
                             try:
                                 self.ui.bring_to_front()
                             except Exception:
