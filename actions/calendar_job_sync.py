@@ -286,6 +286,16 @@ def sync_daily_digest_events(service=None) -> dict:
         except Exception as e:
             print(f"[CalendarJobSync] Error writing digest for {d_key}: {e}")
 
+    # Clean up stale digest events for dates that no longer contain applied jobs
+    stale_digests_deleted = 0
+    for d_key, ev_id in existing_digests.items():
+        if d_key not in days:
+            try:
+                service.events().delete(calendarId=cal_id, eventId=ev_id).execute()
+                stale_digests_deleted += 1
+            except Exception as e:
+                print(f"[CalendarJobSync] Error deleting stale digest for {d_key}: {e}")
+
     # Purge old 30-min clutter
     deleted_legacy = cleanup_legacy_individual_events(service)
 
@@ -293,10 +303,11 @@ def sync_daily_digest_events(service=None) -> dict:
         "status": "success",
         "digests_created": digests_created,
         "digests_updated": digests_updated,
+        "stale_digests_deleted": stale_digests_deleted,
         "total_days_tracked": len(days),
         "total_applied_jobs": len(applied_jobs),
         "deleted_legacy_events": deleted_legacy,
-        "message": f"Synced {len(days)} daily application digests ({digests_created} new, {digests_updated} updated). Cleaned up {deleted_legacy} legacy events.",
+        "message": f"Synced {len(days)} daily application digests ({digests_created} new, {digests_updated} updated, {stale_digests_deleted} stale removed). Cleaned up {deleted_legacy} legacy events.",
     }
 
 
