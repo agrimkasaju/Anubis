@@ -688,8 +688,14 @@ class OrionParticleCanvas(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._is_double_click = True
             win = self.window()
-            if win and hasattr(win, "_toggle_maximize"):
-                win._toggle_maximize()
+            if win:
+                if win.isMaximized() or win.isFullScreen():
+                    if hasattr(win, "set_hud_expanded"):
+                        win.set_hud_expanded(False)
+                    elif hasattr(win, "_toggle_maximize"):
+                        win._toggle_maximize()
+                elif hasattr(win, "_toggle_maximize"):
+                    win._toggle_maximize()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)

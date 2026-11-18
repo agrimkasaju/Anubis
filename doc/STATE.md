@@ -1,19 +1,19 @@
 # State: O.R.I.O.N Minimalist 3D Visage & Interactive Glassmorphic HUD
 
 ## Current Status
-- **Active Epoch:** Epoch 12 Complete (Wayland Surface Clamping & Fullscreen Collapse Mouse Tracking Synchronization)
-- **Current Objective:** Eliminate Wayland compositor surface expansion into an invisible transparent box on the right of Orion when transitioning from fullscreen or maximized mode to compact orb mode; lock `MainWindow`, `_visage_container`, and `self.hud` strictly to fixed 300x300 px dimensions with zero margin/spacing offsets; route background thread wake-ups safely through Qt queued signals to eliminate cross-thread QOpenGLContext errors.
+- **Active Epoch:** Epoch 13 Complete (Wayland Surface Clamping, Maximize State Decoupling, and Background Resume Pop-Up Prevention)
+- **Current Objective:** Eliminate Wayland compositor surface retention and invisible box offsets on minimized Orion; decouple maximize/fullscreen state so unmaximizing from compact mode reverts directly to 300x300 px compact orb; eliminate uninvited GUI pop-ups (`bring_to_front()`) during background resume/job compilation; enforce strictly aligned compact visage layout with zero pointer drift.
 - **Current Blockers:** None.
 - **Runtime Environment:** Pop!_OS Linux (COSMIC Desktop, Wayland), Python 3.11, PyQt6, PyOpenGL 3.1.9.
 
 ## Component States
-- `ui.py` (`MainWindow`, `JarvisUI`): Completed & Verified (Enforced `setFixedSize(300, 300)` on MainWindow, `_visage_container`, and `self.hud` in `_apply_compact_orb_geometry`; zeroed `_body_layout` and `_root_layout` spacing and contents margins in compact mode; clamped surface geometry before calling `showNormal()` in `set_hud_expanded(False)`, `_toggle_maximize`, `_toggle_fullscreen`, and `_handle_escape` with singleShot backup guards; added thread-safe `_vitals_sig` and `wake_signal` properties in `JarvisUI`).
-- `main.py` (`JobWatcher`): Completed & Verified (Updated automatic background job discovery wake-up sequence to emit `self.ui.wake_signal.emit()` safely across threads, preventing cross-thread `QOpenGLContext` conflicts).
-- `orion_visage.py`: Completed & Verified (Compositor-delegated dragging via `wh.startSystemMove()` with zero coordinate offsets across fullscreen and compact cycles).
+- `ui.py` (`MainWindow`, `JarvisUI`): Completed & Verified (Tracked `_maximized_from_compact` state flag across `_toggle_maximize`, `_toggle_fullscreen`, and `_handle_escape` to return directly to compact orb mode when maximized from compact mode; removed destructive `self.showNormal()` call from `bring_to_front()` that restored pre-maximize 820x540 dimensions; anchored `_visage_container` to top-left in compact mode and center in expanded mode; enforced `setFixedSize(300, 300)`, `resize(300, 300)`, and `wh.resize(300, 300)` across state transitions with multi-stage singleShot backup guards).
+- `main.py` (`JobWatcher`): Completed & Verified (Removed automatic UI wake-up / `bring_to_front()` from background job discovery and resume compilation loop, keeping notification vocal/background only without stealing desktop focus).
+- `orion_visage.py`: Completed & Verified (Updated `mouseDoubleClickEvent` to collapse directly to compact orb mode via `set_hud_expanded(False)` when double-clicked while maximized or fullscreen).
 - `actions/web_search.py`: Completed & Verified (Resilient DDG search with token sanitization and fallback query execution).
 - `actions/calendar_job_sync.py`: Completed & Verified (Daily digest synchronization engine with automated stale digest event deletion).
-- `tests/test_ui_minimal.py`: 15/15 Passing
+- `tests/test_ui_minimal.py`: 17/17 Passing
 - `tests/test_orion_visage.py`: 8/8 Passing
 - `tests/test_calendar_job_sync.py`: 3/3 Passing
 - `tests/test_vitals.py`: 3/3 Passing
-- Entire Anubis Suite: 40/40 Passing in 4.26s
+- Entire Anubis Suite: 42/42 Passing in 4.56s

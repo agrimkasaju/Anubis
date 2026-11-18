@@ -999,6 +999,7 @@ class MainWindow(QMainWindow):
         sc_esc.activated.connect(self._handle_escape)
 
         self._pending_collapse_to_orb = False
+        self._maximized_from_compact = False
         self._drag_start_pos = None
 
         # Default state: minimalist compact floating orb
@@ -1025,6 +1026,7 @@ class MainWindow(QMainWindow):
         self._hud_expanded = expanded
         if expanded:
             self._pending_collapse_to_orb = False
+            self._body_layout.setAlignment(self._visage_container, Qt.AlignmentFlag.AlignCenter)
             self._visage_container.setMinimumSize(260, 260)
             self._visage_container.setMaximumSize(16777215, 16777215)
             self.hud.setMinimumSize(260, 260)
@@ -1048,6 +1050,9 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(50, self._apply_compact_orb_geometry)
                 QTimer.singleShot(150, self._apply_compact_orb_geometry)
                 return
+            else:
+                QTimer.singleShot(20, self._apply_compact_orb_geometry)
+                QTimer.singleShot(80, self._apply_compact_orb_geometry)
 
     def _apply_compact_orb_geometry(self):
         self._pending_collapse_to_orb = False
@@ -1058,9 +1063,14 @@ class MainWindow(QMainWindow):
         self._root_layout.setSpacing(0)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(0)
+        self._body_layout.setAlignment(self._visage_container, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._visage_container.setFixedSize(300, 300)
         self.hud.setFixedSize(300, 300)
         self.setFixedSize(300, 300)
+        self.resize(300, 300)
+        wh = self.windowHandle()
+        if wh:
+            wh.resize(QSize(300, 300))
 
     def toggle_hud_state(self):
         self.set_hud_expanded(not self._hud_expanded)
@@ -1073,11 +1083,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_maximize(self):
         if self.isMaximized() or self.isFullScreen():
-            if not self._hud_expanded:
-                self._apply_compact_orb_geometry()
-                self.showNormal()
-                QTimer.singleShot(50, self._apply_compact_orb_geometry)
-                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            if getattr(self, '_maximized_from_compact', False) or not self._hud_expanded:
+                self._maximized_from_compact = False
+                self.set_hud_expanded(False)
             else:
                 self.setMinimumSize(820, 540)
                 self.setMaximumSize(16777215, 16777215)
@@ -1086,16 +1094,17 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
             if not self._hud_expanded:
+                self._maximized_from_compact = True
                 self.set_hud_expanded(True)
+            else:
+                self._maximized_from_compact = False
             self.showMaximized()
 
     def _toggle_fullscreen(self):
         if self.isFullScreen() or self.isMaximized():
-            if not self._hud_expanded:
-                self._apply_compact_orb_geometry()
-                self.showNormal()
-                QTimer.singleShot(50, self._apply_compact_orb_geometry)
-                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            if getattr(self, '_maximized_from_compact', False) or not self._hud_expanded:
+                self._maximized_from_compact = False
+                self.set_hud_expanded(False)
             else:
                 self.setMinimumSize(820, 540)
                 self.setMaximumSize(16777215, 16777215)
@@ -1104,16 +1113,17 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
             if not self._hud_expanded:
+                self._maximized_from_compact = True
                 self.set_hud_expanded(True)
+            else:
+                self._maximized_from_compact = False
             self.showFullScreen()
 
     def _handle_escape(self):
         if self.isFullScreen() or self.isMaximized():
-            if not self._hud_expanded:
-                self._apply_compact_orb_geometry()
-                self.showNormal()
-                QTimer.singleShot(50, self._apply_compact_orb_geometry)
-                QTimer.singleShot(150, self._apply_compact_orb_geometry)
+            if getattr(self, '_maximized_from_compact', False) or not self._hud_expanded:
+                self._maximized_from_compact = False
+                self.set_hud_expanded(False)
             else:
                 self.setMinimumSize(820, 540)
                 self.setMaximumSize(16777215, 16777215)
@@ -1192,6 +1202,8 @@ class MainWindow(QMainWindow):
                 if not self.isMaximized() and not self.isFullScreen():
                     if getattr(self, '_pending_collapse_to_orb', False) or not self._hud_expanded:
                         self._apply_compact_orb_geometry()
+                        QTimer.singleShot(20, self._apply_compact_orb_geometry)
+                        QTimer.singleShot(80, self._apply_compact_orb_geometry)
                     elif self._hud_expanded:
                         self.setMinimumSize(820, 540)
                         self.setMaximumSize(16777215, 16777215)
@@ -1214,6 +1226,8 @@ class MainWindow(QMainWindow):
                 self._in_compact_fix = True
                 try:
                     self._apply_compact_orb_geometry()
+                    QTimer.singleShot(10, self._apply_compact_orb_geometry)
+                    QTimer.singleShot(50, self._apply_compact_orb_geometry)
                 finally:
                     self._in_compact_fix = False
         if self._overlay and self._overlay.isVisible():
@@ -1460,10 +1474,10 @@ class MainWindow(QMainWindow):
             print("🐺 [ANUBIS]: Wake-word predictions paused.")
 
         self.set_hud_expanded(False)
-        self.showNormal()
         self.show()
         self.raise_()
         self.activateWindow()
+        QTimer.singleShot(30, self._apply_compact_orb_geometry)
         print("🐺 [ANUBIS]: Window popped up on screen in COMPACT_ORB.")
 
     def _on_setup_done(self, key: str, or_key: str, os_name: str):

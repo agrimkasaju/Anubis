@@ -795,27 +795,8 @@ class JarvisLive:
                     location = pending.get("location", "")
                     loc_text = f" in {location}" if location else ""
                     
-                    # --- AUTOMATIC WAKE-UP SEQUENCE ---
-                    print(f"[ORION] 📢 Job received for {company} (stage: {stage})! Forcing UI wake-up...")
-                    
-                    # Trigger the UI to pop up from the background safely across threads
-                    if hasattr(self, 'ui'):
-                        if hasattr(self.ui, 'wake_signal'):
-                            try:
-                                self.ui.wake_signal.emit()
-                            except Exception:
-                                pass
-                        elif hasattr(self.ui, 'bring_to_front'):
-                            try:
-                                self.ui.bring_to_front()
-                            except Exception:
-                                pass
-                        elif hasattr(self.ui, 'show'):
-                            try:
-                                self.ui.show()
-                            except Exception:
-                                pass
-                    # ----------------------------------
+                    # Announce job discovery/ready stage vocally without popping up GUI window
+                    print(f"[ORION] 📢 Job received for {company} (stage: {stage})!")
                     
                     if stage == "screen":
                         prompt_msg = (

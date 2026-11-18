@@ -6,7 +6,8 @@ import os
 import sys
 import pytest
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtGui import QMouseEvent
 
 ANUBIS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ANUBIS_DIR not in sys.path:
@@ -343,6 +344,58 @@ def test_jarvis_ui_thread_safe_wake_signal(qapp):
     assert jui._win.width() == 300
     assert jui._win.height() == 300
     jui._win.close()
+
+
+def test_toggle_maximize_from_compact_reverts_to_compact(qapp):
+    win = MainWindow()
+    win.show()
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+
+    # Maximize from compact orb
+    win._toggle_maximize()
+    assert win.isMaximized() is True
+    assert win._maximized_from_compact is True
+
+    # Revert / unmaximize must collapse directly back to compact 300x300 orb
+    win._toggle_maximize()
+    qapp.processEvents()
+    assert win.isMaximized() is False
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+    assert win._header.isHidden() is True
+    assert win._right_panel.isHidden() is True
+    win.close()
+
+
+def test_visage_double_click_while_maximized_collapses_to_compact(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+    win.showMaximized()
+    assert win.isMaximized() is True
+
+    # Double-clicking on visage while maximized must collapse directly to compact orb
+    pos = QPointF(150.0, 150.0)
+    dbl_click_event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonDblClick,
+        pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    win.hud.mouseDoubleClickEvent(dbl_click_event)
+    qapp.processEvents()
+    assert win.isMaximized() is False
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+    assert win._header.isHidden() is True
+    assert win._right_panel.isHidden() is True
+    win.close()
+
 
 
 
