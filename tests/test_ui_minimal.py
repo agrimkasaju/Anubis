@@ -179,3 +179,73 @@ def test_dark_palette_contrast_applied(qapp):
     assert window_text.lightness() > 200
 
 
+def test_visage_click_expands_when_compact_and_does_not_collapse_when_expanded(qapp):
+    win = MainWindow()
+    win.show()
+    assert win._hud_expanded is False
+
+    # 1. Click visage in compact orb mode -> expands to HUD
+    win.hud.visageClicked.emit()
+    assert win._hud_expanded is True
+    assert win._header.isVisible() is True
+    assert win._right_panel.isVisible() is True
+
+    # 2. Click visage in expanded mode -> does NOT collapse the window
+    win.hud.visageClicked.emit()
+    assert win._hud_expanded is True
+    assert win._header.isVisible() is True
+    assert win._right_panel.isVisible() is True
+
+    # 3. Fullscreen / maximize -> click visage still does NOT collapse
+    win._toggle_maximize()
+    assert win.isMaximized() is True
+    win.hud.visageClicked.emit()
+    assert win._hud_expanded is True
+    assert win.isMaximized() is True
+    win.close()
+
+
+def test_collapse_from_maximized_or_fullscreen_restores_compact_geometry(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+    win.showMaximized()
+    assert win.isMaximized() is True
+
+    # Calling set_hud_expanded(False) from maximized/fullscreen state
+    win.set_hud_expanded(False)
+
+    # Either immediately via changeEvent or on compositor callback, compact geometry is restored
+    if win._pending_collapse_to_orb:
+        win._apply_compact_orb_geometry()
+
+    assert win._hud_expanded is False
+    assert win._pending_collapse_to_orb is False
+    assert win._header.isHidden() is True
+    assert win._right_panel.isHidden() is True
+    assert win.width() == 300
+    assert win.height() == 300
+    win.close()
+
+
+def test_escape_key_handler(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+    win.showFullScreen()
+    assert win.isFullScreen() is True
+
+    # Escape while fullscreen -> restores normal expanded HUD
+    win._handle_escape()
+    assert win.isFullScreen() is False
+    assert win._hud_expanded is True
+
+    # Escape while normal expanded HUD -> collapses to compact orb
+    win._handle_escape()
+    assert win._hud_expanded is False
+    assert win.width() <= 360
+    assert win.height() <= 360
+    win.close()
+
+
+

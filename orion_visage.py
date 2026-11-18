@@ -681,29 +681,44 @@ class OrionParticleCanvas(QWidget):
             self._press_win_pos = win.frameGeometry().topLeft()
             self._press_time = time.monotonic()
             self._is_dragging = False
+            self._is_double_click = False
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._is_double_click = True
+            win = self.window()
+            if win and hasattr(win, "_toggle_maximize"):
+                win._toggle_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._press_global_pos is not None:
             delta = event.globalPosition().toPoint() - self._press_global_pos
-            if delta.manhattanLength() >= 6:
+            if delta.manhattanLength() >= 4:
                 self._is_dragging = True
                 win = self.window()
-                # On native Wayland, delegate dragging directly to compositor
-                wh = win.windowHandle()
-                if wh and QGuiApplication.platformName() == "wayland":
-                    wh.startSystemMove()
-                    self._press_global_pos = None
-                    return
-                # X11 fallback
+                # On native Wayland, delegate dragging directly to compositor when not maximized/fullscreen
+                if not win.isMaximized() and not win.isFullScreen():
+                    wh = win.windowHandle()
+                    if wh and QGuiApplication.platformName() == "wayland":
+                        if wh.startSystemMove():
+                            self._press_global_pos = None
+                            return
+                # X11 / fallback window move
                 win.move(self._press_win_pos + delta)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            elapsed = time.monotonic() - self._press_time
-            if not self._is_dragging and elapsed <= 0.35:
-                self.visageClicked.emit()
+            if getattr(self, '_is_double_click', False):
+                self._is_double_click = False
+            else:
+                elapsed = time.monotonic() - self._press_time
+                if not self._is_dragging and elapsed <= 0.35:
+                    self.visageClicked.emit()
             self._press_global_pos = None
             self._is_dragging = False
         super().mouseReleaseEvent(event)

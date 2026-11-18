@@ -190,3 +190,29 @@ def test_spherical_body_containment():
     assert np.max(radial_distances) * 0.78 < 0.85
 
 
+def test_canvas_mouse_double_click_avoids_duplicate_visage_clicked(qapp):
+    canvas = OrionParticleCanvas()
+    clicked = []
+    canvas.visageClicked.connect(lambda: clicked.append(True))
+
+    pos = QPointF(150.0, 150.0)
+    press_event = QMouseEvent(QMouseEvent.Type.MouseButtonPress, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    release_event = QMouseEvent(QMouseEvent.Type.MouseButtonRelease, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    dbl_click_event = QMouseEvent(QMouseEvent.Type.MouseButtonDblClick, pos, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+
+    # 1. First click
+    canvas.mousePressEvent(press_event)
+    canvas.mouseReleaseEvent(release_event)
+    assert len(clicked) == 1
+
+    # 2. Double click immediately following
+    canvas.mousePressEvent(press_event)
+    canvas.mouseDoubleClickEvent(dbl_click_event)
+    assert canvas._is_double_click is True
+    canvas.mouseReleaseEvent(release_event)
+    # The release after double click must NOT emit a second visageClicked
+    assert len(clicked) == 1
+    assert canvas._is_double_click is False
+
+
+

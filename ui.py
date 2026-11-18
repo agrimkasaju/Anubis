@@ -379,6 +379,13 @@ class GlassHeaderWidget(QWidget):
             self._press_pos = event.globalPosition().toPoint()
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.maximize_clicked.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event):
         if self._press_pos is not None:
             delta = event.globalPosition().toPoint() - self._press_pos
@@ -939,7 +946,7 @@ class MainWindow(QMainWindow):
         self.hud = OrionParticleCanvas(self._visage_container)
         self.hud.setMinimumSize(260, 260)
         self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.hud.visageClicked.connect(self.toggle_hud_state)
+        self.hud.visageClicked.connect(self._on_visage_clicked)
         v_layout.addWidget(self.hud, stretch=1)
 
         self._vitals_toast = VitalsToastOverlay(self._visage_container)
@@ -972,6 +979,11 @@ class MainWindow(QMainWindow):
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
+        sc_esc = QShortcut(QKeySequence("Escape"), self)
+        sc_esc.activated.connect(self._handle_escape)
+
+        self._pending_collapse_to_orb = False
+        self._drag_start_pos = None
 
         # Default state: minimalist compact floating orb
         self.set_hud_expanded(False)
@@ -982,9 +994,21 @@ class MainWindow(QMainWindow):
             (screen.height() - 300) // 2,
         )
 
+    def _on_visage_clicked(self):
+        if not self._hud_expanded:
+            self.set_hud_expanded(True)
+        else:
+            # When already expanded or full screen, clicking on Orion activates microphone / un-mutes
+            # or focuses command input rather than collapsing the window into a broken state
+            if getattr(self, '_muted', False):
+                self._toggle_mute()
+            elif hasattr(self, '_input'):
+                self._input.setFocus()
+
     def set_hud_expanded(self, expanded: bool):
         self._hud_expanded = expanded
         if expanded:
+            self._pending_collapse_to_orb = False
             self._root_layout.setContentsMargins(8, 6, 8, 8)
             self._root_layout.setSpacing(6)
             self.setMaximumSize(16777215, 16777215)
@@ -995,15 +1019,22 @@ class MainWindow(QMainWindow):
                 self.resize(820, 540)
         else:
             if self.isMaximized() or self.isFullScreen():
+                # On Wayland, unmaximize / exit fullscreen asynchronously before applying compact orb limits
+                self._pending_collapse_to_orb = True
                 self.showNormal()
-            self._header.hide()
-            self._right_panel.hide()
-            self._vitals_toast.hide()
-            self._root_layout.setContentsMargins(0, 0, 0, 0)
-            self._root_layout.setSpacing(0)
-            self.setMinimumSize(260, 260)
-            self.setMaximumSize(360, 360)
-            self.resize(300, 300)
+                return
+            self._apply_compact_orb_geometry()
+
+    def _apply_compact_orb_geometry(self):
+        self._pending_collapse_to_orb = False
+        self._header.hide()
+        self._right_panel.hide()
+        self._vitals_toast.hide()
+        self._root_layout.setContentsMargins(0, 0, 0, 0)
+        self._root_layout.setSpacing(0)
+        self.setMinimumSize(260, 260)
+        self.setMaximumSize(360, 360)
+        self.resize(300, 300)
 
     def toggle_hud_state(self):
         self.set_hud_expanded(not self._hud_expanded)
@@ -1020,7 +1051,7 @@ class MainWindow(QMainWindow):
             if self._hud_expanded:
                 self.resize(820, 540)
             else:
-                self.resize(300, 300)
+                self._apply_compact_orb_geometry()
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
@@ -1032,11 +1063,44 @@ class MainWindow(QMainWindow):
             if self._hud_expanded:
                 self.resize(820, 540)
             else:
-                self.resize(300, 300)
+                self._apply_compact_orb_geometry()
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
             self.showFullScreen()
+
+    def _handle_escape(self):
+        if self.isFullScreen() or self.isMaximized():
+            self.showNormal()
+            if self._hud_expanded:
+                self.resize(820, 540)
+            else:
+                self._apply_compact_orb_geometry()
+        elif self._hud_expanded:
+            self.set_hud_expanded(False)
+
+    def mousePressEvent(self, event):
+        if not self._hud_expanded and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.globalPosition().toPoint()
+            self._drag_win_pos = self.frameGeometry().topLeft()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not self._hud_expanded and getattr(self, '_drag_start_pos', None) is not None:
+            delta = event.globalPosition().toPoint() - self._drag_start_pos
+            if delta.manhattanLength() >= 4:
+                if not self.isMaximized() and not self.isFullScreen():
+                    wh = self.windowHandle()
+                    if wh and QGuiApplication.platformName() == "wayland":
+                        if wh.startSystemMove():
+                            self._drag_start_pos = None
+                            return
+                self.move(self._drag_win_pos + delta)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
 
     def closeEvent(self, event):
         """Instantly hides the UI and resets wake-word buffers to prevent pop-up bounces."""
@@ -1071,23 +1135,20 @@ class MainWindow(QMainWindow):
                 print("🐺 [ANUBIS]: Window minimized, wake listener active.")
                 if listener:
                     listener.resume_listening()
-            elif event.oldState() & Qt.WindowState.WindowMinimized:
-                print("🐺 [ANUBIS]: Window restored from minimized.")
-                if listener:
+            else:
+                if listener and event.oldState() & Qt.WindowState.WindowMinimized:
+                    print("🐺 [ANUBIS]: Window restored from minimized.")
                     listener.pause_listening()
-                if self._hud_expanded:
-                    self.setMaximumSize(16777215, 16777215)
-                    self.setMinimumSize(700, 480)
-                    self._header.show()
-                    self._right_panel.show()
-                    if not self.isMaximized() and not self.isFullScreen():
+
+                if not self.isMaximized() and not self.isFullScreen():
+                    if getattr(self, '_pending_collapse_to_orb', False):
+                        self._apply_compact_orb_geometry()
+                    elif self._hud_expanded:
+                        self.setMaximumSize(16777215, 16777215)
+                        self.setMinimumSize(700, 480)
+                        self._header.show()
+                        self._right_panel.show()
                         QTimer.singleShot(50, lambda: self.resize(820, 540))
-                else:
-                    self._header.hide()
-                    self._right_panel.hide()
-                    self.setMinimumSize(260, 260)
-                    self.setMaximumSize(360, 360)
-                    self.resize(300, 300)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1097,6 +1158,10 @@ class MainWindow(QMainWindow):
                 self.setMaximumSize(16777215, 16777215)
                 self.setMinimumSize(700, 480)
                 QTimer.singleShot(10, lambda: self.resize(820, 540))
+        elif not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
+            # Guard against Wayland compositor leaving compact orb expanded to pre-maximize size (e.g. 820x540)
+            if event.size().width() > 360 or event.size().height() > 360:
+                self._apply_compact_orb_geometry()
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390
             cw = self.centralWidget()
