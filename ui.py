@@ -282,9 +282,10 @@ class GlassHeaderWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("GlassHeader")
         self.setFixedHeight(42)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet("""
             QWidget#GlassHeader {
-                background-color: rgba(2, 10, 18, 0.65);
+                background-color: rgba(2, 10, 18, 0.40);
                 border: 1px solid rgba(0, 212, 255, 0.28);
                 border-radius: 8px;
             }
@@ -419,23 +420,25 @@ class LogWidget(QTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setFont(QFont("Courier New", 9))
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(f"""
             QTextEdit {{
-                background: {C.PANEL};
+                background: rgba(0, 15, 30, 0.15);
                 color: {C.TEXT};
-                border: 1px solid {C.BORDER};
+                border: 1px solid rgba(0, 212, 255, 0.22);
                 border-radius: 4px;
                 padding: 6px;
                 selection-background-color: {C.PRI_GHO};
             }}
             QScrollBar:vertical {{
-                background: {C.BG};
-                width: 8px;
+                background: transparent;
+                width: 6px;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: {C.BORDER_B};
-                border-radius: 4px;
+                background: rgba(0, 212, 255, 0.28);
+                border-radius: 3px;
                 min-height: 20px;
             }}
         """)
@@ -539,6 +542,8 @@ class FileDropZone(QWidget):
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(100)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
         self._current_file: str | None = None
         self._hovering  = False
         self._drag_over = False
@@ -632,6 +637,8 @@ class FileDropZone(QWidget):
 class _DropCanvas(QWidget):
     def __init__(self, zone: FileDropZone):
         super().__init__(zone)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
         self._z = zone
 
     def paintEvent(self, _):
@@ -642,14 +649,21 @@ class _DropCanvas(QWidget):
         pad  = 6
         rect = QRectF(pad, pad, W - pad * 2, H - pad * 2)
 
-        bg_col = qcol("#001a24" if z._drag_over else ("#001218" if z._hovering else C.PANEL))
-        p.setBrush(QBrush(bg_col)); p.setPen(Qt.PenStyle.NoPen)
+        if z._drag_over:
+            bg_col = QColor(0, 212, 255, 30)
+        elif z._hovering:
+            bg_col = QColor(0, 212, 255, 18)
+        else:
+            bg_col = QColor(0, 15, 30, 20)
+
+        p.setBrush(QBrush(bg_col))
+        p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(rect, 6, 6)
 
         if z._current_file:   border_col = qcol(C.GREEN, 200)
         elif z._drag_over:    border_col = qcol(C.PRI, 230)
         elif z._hovering:     border_col = qcol(C.BORDER_B, 200)
-        else:                 border_col = qcol(C.BORDER, 160)
+        else:                 border_col = QColor(0, 212, 255, 60)
 
         pen = QPen(border_col, 1.5, Qt.PenStyle.DashLine)
         pen.setDashOffset(z._dash_offset)
@@ -1046,7 +1060,7 @@ class MainWindow(QMainWindow):
             self._log.append_log(f"SYS: {summary}")
 
     def _toggle_maximize(self):
-        if self.isMaximized():
+        if self.isMaximized() or self.isFullScreen():
             self.showNormal()
             if self._hud_expanded:
                 self.resize(820, 540)
@@ -1058,7 +1072,7 @@ class MainWindow(QMainWindow):
             self.showMaximized()
 
     def _toggle_fullscreen(self):
-        if self.isFullScreen():
+        if self.isFullScreen() or self.isMaximized():
             self.showNormal()
             if self._hud_expanded:
                 self.resize(820, 540)
@@ -1092,15 +1106,20 @@ class MainWindow(QMainWindow):
                 if not self.isMaximized() and not self.isFullScreen():
                     wh = self.windowHandle()
                     if wh and QGuiApplication.platformName() == "wayland":
-                        if wh.startSystemMove():
-                            self._drag_start_pos = None
-                            return
-                self.move(self._drag_win_pos + delta)
+                        wh.startSystemMove()
+                        self._drag_start_pos = None
+                        return
+                    elif QGuiApplication.platformName() != "wayland":
+                        self.move(self._drag_win_pos + delta)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         self._drag_start_pos = None
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        self._drag_start_pos = None
+        super().leaveEvent(event)
 
     def closeEvent(self, event):
         """Instantly hides the UI and resets wake-word buffers to prevent pop-up bounces."""
@@ -1149,6 +1168,8 @@ class MainWindow(QMainWindow):
                         self._header.show()
                         self._right_panel.show()
                         QTimer.singleShot(50, lambda: self.resize(820, 540))
+                    else:
+                        self._apply_compact_orb_geometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1175,9 +1196,10 @@ class MainWindow(QMainWindow):
         w = QFrame()
         w.setObjectName("GlassPanel")
         w.setFixedWidth(_RIGHT_W)
+        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         w.setStyleSheet("""
             QFrame#GlassPanel {
-                background-color: rgba(2, 10, 18, 0.68);
+                background-color: rgba(2, 10, 18, 0.40);
                 border: 1px solid rgba(0, 212, 255, 0.28);
                 border-radius: 8px;
             }
@@ -1238,7 +1260,7 @@ class MainWindow(QMainWindow):
         fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         fs_btn.setStyleSheet("""
             QPushButton {
-                background: rgba(6, 22, 36, 0.65);
+                background: rgba(0, 212, 255, 0.10);
                 color: #5ab8cc;
                 border: 1px solid rgba(0, 212, 255, 0.25);
                 border-radius: 4px;
@@ -1246,7 +1268,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 color: #00d4ff;
                 border: 1px solid #00d4ff;
-                background: rgba(0, 212, 255, 0.15);
+                background: rgba(0, 212, 255, 0.22);
             }
         """)
         fs_btn.clicked.connect(self._toggle_fullscreen)
@@ -1263,15 +1285,15 @@ class MainWindow(QMainWindow):
         self._input.setFixedHeight(30)
         self._input.setStyleSheet("""
             QLineEdit {
-                background: rgba(2, 10, 18, 0.70);
+                background: rgba(0, 20, 35, 0.25);
                 color: #d8f8ff;
-                border: 1px solid rgba(0, 212, 255, 0.35);
+                border: 1px solid rgba(0, 212, 255, 0.25);
                 border-radius: 4px;
                 padding: 3px 8px;
             }
             QLineEdit:focus {
                 border: 1px solid #00d4ff;
-                background: rgba(4, 16, 28, 0.85);
+                background: rgba(0, 35, 60, 0.40);
             }
         """)
         self._input.returnPressed.connect(self._send)
@@ -1283,13 +1305,13 @@ class MainWindow(QMainWindow):
         send.setCursor(Qt.CursorShape.PointingHandCursor)
         send.setStyleSheet("""
             QPushButton {
-                background: rgba(6, 22, 36, 0.75);
+                background: rgba(0, 212, 255, 0.12);
                 color: #00d4ff;
-                border: 1px solid rgba(0, 212, 255, 0.40);
+                border: 1px solid rgba(0, 212, 255, 0.30);
                 border-radius: 4px;
             }
             QPushButton:hover {
-                background: rgba(0, 212, 255, 0.25);
+                background: rgba(0, 212, 255, 0.28);
                 border: 1px solid #00d4ff;
                 color: #ffffff;
             }
@@ -1331,18 +1353,35 @@ class MainWindow(QMainWindow):
             self._mute_btn.setText("🔇  MICROPHONE MUTED")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #140006; color: {C.MUTED_C};
-                    border: 1px solid {C.MUTED_C}; border-radius: 3px;
+                    background: rgba(255, 51, 102, 0.10);
+                    color: {C.MUTED_C};
+                    border: 1px solid rgba(255, 51, 102, 0.45);
+                    border-radius: 4px;
+                    padding: 5px;
+                    font-family: 'Courier New', monospace;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background: rgba(255, 51, 102, 0.22);
+                    border: 1px solid {C.MUTED_C};
                 }}
             """)
         else:
             self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #00140a; color: {C.GREEN};
-                    border: 1px solid {C.GREEN}; border-radius: 3px;
+                    background: rgba(0, 255, 136, 0.08);
+                    color: {C.GREEN};
+                    border: 1px solid rgba(0, 255, 136, 0.45);
+                    border-radius: 4px;
+                    padding: 5px;
+                    font-family: 'Courier New', monospace;
+                    font-weight: bold;
                 }}
-                QPushButton:hover {{ background: #001f10; }}
+                QPushButton:hover {{
+                    background: rgba(0, 255, 136, 0.20);
+                    border: 1px solid {C.GREEN};
+                }}
             """)
 
     def _send(self):

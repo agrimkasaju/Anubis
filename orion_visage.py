@@ -704,11 +704,11 @@ class OrionParticleCanvas(QWidget):
                 if not win.isMaximized() and not win.isFullScreen():
                     wh = win.windowHandle()
                     if wh and QGuiApplication.platformName() == "wayland":
-                        if wh.startSystemMove():
-                            self._press_global_pos = None
-                            return
-                # X11 / fallback window move
-                win.move(self._press_win_pos + delta)
+                        wh.startSystemMove()
+                        self._press_global_pos = None
+                        return
+                    elif QGuiApplication.platformName() != "wayland":
+                        win.move(self._press_win_pos + delta)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -716,9 +716,13 @@ class OrionParticleCanvas(QWidget):
             if getattr(self, '_is_double_click', False):
                 self._is_double_click = False
             else:
-                elapsed = time.monotonic() - self._press_time
-                if not self._is_dragging and elapsed <= 0.35:
+                elapsed = time.monotonic() - getattr(self, '_press_time', 0.0)
+                if not getattr(self, '_is_dragging', False) and elapsed <= 0.35:
                     self.visageClicked.emit()
             self._press_global_pos = None
             self._is_dragging = False
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        self._press_global_pos = None
+        super().leaveEvent(event)

@@ -6,6 +6,7 @@ import os
 import sys
 import pytest
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
 
 ANUBIS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ANUBIS_DIR not in sys.path:
@@ -246,6 +247,51 @@ def test_escape_key_handler(qapp):
     assert win.width() <= 360
     assert win.height() <= 360
     win.close()
+
+
+def test_hud_widgets_transparency(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+
+    # Activity Log transparency
+    assert win._log.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+    assert win._log.viewport().testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+    assert "rgba(" in win._log.styleSheet() or "transparent" in win._log.styleSheet()
+
+    # File Drop Zone & Drop Canvas transparency
+    assert win._drop_zone.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+    assert win._drop_zone._canvas.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+
+    # Microphone button transparency
+    win._muted = False
+    win._style_mute_btn()
+    assert "rgba(0, 255, 136, 0.08)" in win._mute_btn.styleSheet()
+    win._muted = True
+    win._style_mute_btn()
+    assert "rgba(255, 51, 102, 0.10)" in win._mute_btn.styleSheet()
+
+    # Right glass panel transparency
+    assert win._right_panel.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+    assert "rgba(2, 10, 18, 0.40)" in win._right_panel.styleSheet()
+
+    win.close()
+
+
+def test_toggle_maximize_from_fullscreen_restores_cleanly(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+    win.showFullScreen()
+    assert win.isFullScreen() is True
+
+    # Double click or toggle maximize while fullscreen must restore to normal rather than erroring
+    win._toggle_maximize()
+    assert win.isFullScreen() is False
+    assert win._hud_expanded is True
+    assert win.width() >= 700
+    win.close()
+
 
 
 
