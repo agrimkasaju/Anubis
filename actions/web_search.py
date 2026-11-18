@@ -60,13 +60,30 @@ def _ddg_search(query: str, max_results: int = 6) -> list[dict]:
         from duckduckgo_search import DDGS
 
     results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, max_results=max_results):
-            results.append({
-                "title":   r.get("title",  ""),
-                "snippet": r.get("body",   ""),
-                "url":     r.get("href",   ""),
-            })
+    def _execute_search(q: str):
+        found = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(q, max_results=max_results):
+                found.append({
+                    "title":   r.get("title",  ""),
+                    "snippet": r.get("body",   ""),
+                    "url":     r.get("href",   ""),
+                })
+        return found
+
+    try:
+        results = _execute_search(query)
+    except Exception as e:
+        print(f"[WebSearch] Primary DDG search for {query!r} failed: {e}")
+        simplified = re.sub(r'["\':?!@#$%^&*()]', ' ', query).strip()
+        simplified = " ".join(simplified.split()[:8])
+        if simplified and simplified.lower() != query.lower():
+            try:
+                results = _execute_search(simplified)
+                print(f"[WebSearch] Fallback search for {simplified!r} retrieved {len(results)} results.")
+            except Exception as e2:
+                print(f"[WebSearch] Fallback search failed: {e2}")
+
     return results
 
 
@@ -166,8 +183,9 @@ def web_search(
 
     prompt = (
         f"User Query: {query}\n\n"
-        f"Live Web Search Results:\n{search_snippets if search_snippets else 'No search snippets retrieved.'}\n\n"
-        "Provide a concise summary answering the user query:"
+        f"Live Web Search Results:\n{search_snippets if search_snippets else 'No live search results could be retrieved from search engines.'}\n\n"
+        "Provide a concise summary answering the user query. If search results are present, base your answer directly on them. "
+        "If no live results are present, answer using your broad knowledge base to give a helpful explanation while noting that live search results were not available:"
     )
 
     try:
