@@ -904,7 +904,10 @@ class MainWindow(QMainWindow):
         self._hud_expanded = False
 
         central = QWidget(self)
-        central.setStyleSheet("background: transparent; border: none;")
+        central.setObjectName("CentralWidget")
+        central.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        central.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        central.setStyleSheet("QWidget#CentralWidget { background: transparent; border: none; }")
         self.setCentralWidget(central)
 
         self._root_layout = QVBoxLayout(central)
@@ -925,7 +928,9 @@ class MainWindow(QMainWindow):
 
         # 2a. Visage Container (houses OrionParticleCanvas and VitalsToastOverlay)
         self._visage_container = QWidget()
-        self._visage_container.setStyleSheet("background: transparent;")
+        self._visage_container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._visage_container.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self._visage_container.setStyleSheet("background: transparent; border: none;")
         self._visage_container.setMinimumSize(260, 260)
         v_layout = QVBoxLayout(self._visage_container)
         v_layout.setContentsMargins(0, 0, 0, 0)
@@ -980,7 +985,6 @@ class MainWindow(QMainWindow):
     def set_hud_expanded(self, expanded: bool):
         self._hud_expanded = expanded
         if expanded:
-            self.clearMask()
             self._root_layout.setContentsMargins(8, 6, 8, 8)
             self._root_layout.setSpacing(6)
             self.setMaximumSize(16777215, 16777215)
@@ -1000,7 +1004,6 @@ class MainWindow(QMainWindow):
             self.setMinimumSize(260, 260)
             self.setMaximumSize(360, 360)
             self.resize(300, 300)
-            self.setMask(QRegion(QRect(0, 0, 300, 300), QRegion.RegionType.Ellipse))
 
     def toggle_hud_state(self):
         self.set_hud_expanded(not self._hud_expanded)
@@ -1018,7 +1021,6 @@ class MainWindow(QMainWindow):
                 self.resize(820, 540)
             else:
                 self.resize(300, 300)
-                self.setMask(QRegion(QRect(0, 0, 300, 300), QRegion.RegionType.Ellipse))
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
@@ -1031,7 +1033,6 @@ class MainWindow(QMainWindow):
                 self.resize(820, 540)
             else:
                 self.resize(300, 300)
-                self.setMask(QRegion(QRect(0, 0, 300, 300), QRegion.RegionType.Ellipse))
         else:
             if not self._hud_expanded:
                 self.set_hud_expanded(True)
@@ -1075,7 +1076,6 @@ class MainWindow(QMainWindow):
                 if listener:
                     listener.pause_listening()
                 if self._hud_expanded:
-                    self.clearMask()
                     self.setMaximumSize(16777215, 16777215)
                     self.setMinimumSize(700, 480)
                     self._header.show()
@@ -1088,21 +1088,15 @@ class MainWindow(QMainWindow):
                     self.setMinimumSize(260, 260)
                     self.setMaximumSize(360, 360)
                     self.resize(300, 300)
-                    self.setMask(QRegion(QRect(0, 0, 300, 300), QRegion.RegionType.Ellipse))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
-            self.clearMask()
             # Guard against Wayland compositor transient configure events collapsing expanded HUD
             if event.size().width() < 700 or event.size().height() < 480:
                 self.setMaximumSize(16777215, 16777215)
                 self.setMinimumSize(700, 480)
                 QTimer.singleShot(10, lambda: self.resize(820, 540))
-        elif not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
-            self.setMask(QRegion(QRect(0, 0, self.width(), self.height()), QRegion.RegionType.Ellipse))
-        else:
-            self.clearMask()
         if self._overlay and self._overlay.isVisible():
             ow, oh = 460, 390
             cw = self.centralWidget()

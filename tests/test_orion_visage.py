@@ -170,3 +170,23 @@ def test_drag_suppresses_click_signal(qapp):
     # Dragging must NOT trigger visageClicked
     assert len(clicked) == 0
 
+
+def test_gl_widget_transparency_and_stacking(qapp):
+    cloud = generate_orion_point_cloud()
+    gl_widget = _GLVisageWidget(cloud)
+    assert gl_widget.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
+    assert gl_widget.testAttribute(Qt.WidgetAttribute.WA_NoSystemBackground) is True
+    assert gl_widget.testAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop) is True
+    assert "background: transparent" in gl_widget.styleSheet()
+
+
+def test_spherical_body_containment():
+    cloud = generate_orion_point_cloud()
+    body_pts = cloud[cloud[:, 3] >= 1.5]
+    radial_distances = np.sqrt(body_pts[:, 0]**2 + body_pts[:, 1]**2 + body_pts[:, 2]**2)
+    # Strictly contained within sphere R <= 1.02
+    assert np.max(radial_distances) <= 1.02
+    # At zoom = 0.78, maximum screen coordinate in NDC is 1.02 * 0.78 = 0.7956 < 1.0
+    assert np.max(radial_distances) * 0.78 < 0.85
+
+

@@ -25,21 +25,19 @@ def qapp():
 
 def test_mainwindow_compact_by_default(qapp):
     win = MainWindow()
-    # By default, Orion must start in COMPACT_ORB mode with circular mask
+    # By default, Orion must start in COMPACT_ORB mode
     assert win._hud_expanded is False
     assert win._header.isHidden() is True
     assert win._right_panel.isHidden() is True
     assert win.width() <= 360
     assert win.height() <= 420
     assert isinstance(win.hud, OrionParticleCanvas)
-    assert not win.mask().isEmpty()
 
 
 def test_toggle_hud_state_expansion_and_collapse(qapp):
     win = MainWindow()
     win.show()
     assert win._hud_expanded is False
-    assert not win.mask().isEmpty()
 
     # Expand on click
     win.toggle_hud_state()
@@ -50,7 +48,6 @@ def test_toggle_hud_state_expansion_and_collapse(qapp):
     assert win._right_panel.isVisible() is True
     assert win.width() >= 700
     assert win.height() >= 480
-    assert win.mask().isEmpty() is True
 
     # Collapse on click
     win.toggle_hud_state()
@@ -59,7 +56,6 @@ def test_toggle_hud_state_expansion_and_collapse(qapp):
     assert win._right_panel.isHidden() is True
     assert win.width() <= 360
     assert win.height() <= 420
-    assert not win.mask().isEmpty()
 
 
 def test_bring_to_front_resets_to_compact(qapp):
@@ -158,7 +154,6 @@ def test_header_minimize_collapses_to_compact_orb(qapp):
     assert win._right_panel.isHidden() is True
     assert win.width() <= 360
     assert win.height() <= 360
-    assert not win.mask().isEmpty()
     win.close()
 
 

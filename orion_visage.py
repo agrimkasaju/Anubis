@@ -310,7 +310,9 @@ void main() {
         col = mix(dark_base, mix(dark_glow, dark_core, t), 0.75);
 
         float depth_fade = clamp(1.0 + animated_pos.z * 0.45, 0.30, 1.0);
-        alpha = mix(0.35, 0.72, depth_fade);
+        float r_norm = length(animated_pos);
+        float edge_falloff = smoothstep(1.02, 0.88, r_norm);
+        alpha = mix(0.35, 0.72, depth_fade) * edge_falloff;
         pt_size = mix(2.6, 4.4, t);
     } else if (a_role >= 0.5) {
         // Visage Perimeter Contours: Luminous intense electric cyan #59D4E6
@@ -381,7 +383,9 @@ class _GLVisageWidget(QOpenGLWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setStyleSheet("background: transparent; border: none;")
         self.points = point_cloud
         self.num_points = len(point_cloud)
 
@@ -477,7 +481,9 @@ class _GLVisageWidget(QOpenGLWidget):
             aspect = w / h
 
             # Perspective-style MVP: ortho centered with slight aspect adjustment
-            zoom = 1.08
+            # zoom = 0.78 guarantees the entire 3D sphere floats within a diameter of 234px
+            # inside the 300px window, with 33px transparent margins so no particle touches the edge.
+            zoom = 0.78
             if aspect >= 1.0:
                 mvp = np.diag([zoom / aspect, zoom, zoom * 0.5, 1.0]).astype(np.float32)
             else:
@@ -522,7 +528,7 @@ class _SoftwareVisageWidget(QWidget):
         h = self.height()
         cx = w / 2.0
         cy = h / 2.0
-        scale = min(w, h) * 0.44
+        scale = min(w, h) * 0.38
 
         x0 = self.points[:, 0]
         y0 = self.points[:, 1]
@@ -594,6 +600,8 @@ class OrionParticleCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setStyleSheet("background: transparent; border: none;")
         self.setMinimumSize(240, 240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
