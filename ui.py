@@ -584,8 +584,12 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         parent_win = self.window()
-        path, _ = QFileDialog.getOpenFileName(
-            parent_win, "Select a file for O.R.I.O.N", str(Path.home()),
+        # Decouple from parent window surface so Wayland cosmic-comp does not link
+        # the dialog as a modal sub-surface that causes transient configure collapse.
+        dlg = QFileDialog(None, "Select a file for O.R.I.O.N", str(Path.home()))
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        dlg.setNameFilter(
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -593,14 +597,24 @@ class FileDropZone(QWidget):
             "Code (*.py *.js *.ts *.html *.css *.java *.cpp *.go);;"
             "Audio (*.mp3 *.wav *.ogg *.m4a *.aac *.flac);;"
             "Video (*.mp4 *.avi *.mov *.mkv *.wmv *.webm);;"
-            "Archives (*.zip *.rar *.tar *.gz *.7z)",
+            "Archives (*.zip *.rar *.tar *.gz *.7z)"
         )
-        if path:
-            self._set_file(path)
+        if dlg.exec() == QFileDialog.DialogCode.Accepted:
+            files = dlg.selectedFiles()
+            if files:
+                self._set_file(files[0])
+
         if parent_win and hasattr(parent_win, "_hud_expanded") and parent_win._hud_expanded:
-            if not parent_win.isMaximized() and not parent_win.isFullScreen():
-                parent_win.setMinimumSize(700, 480)
-                parent_win.resize(820, 540)
+            def _restore_expanded():
+                if parent_win._hud_expanded and not parent_win.isMaximized() and not parent_win.isFullScreen():
+                    parent_win.clearMask()
+                    parent_win.setMaximumSize(16777215, 16777215)
+                    parent_win.setMinimumSize(700, 480)
+                    parent_win.resize(820, 540)
+            _restore_expanded()
+            QTimer.singleShot(30, _restore_expanded)
+            QTimer.singleShot(100, _restore_expanded)
+            QTimer.singleShot(250, _restore_expanded)
 
     def _set_file(self, path: str):
         self._current_file = path
@@ -912,11 +926,13 @@ class MainWindow(QMainWindow):
         # 2a. Visage Container (houses OrionParticleCanvas and VitalsToastOverlay)
         self._visage_container = QWidget()
         self._visage_container.setStyleSheet("background: transparent;")
+        self._visage_container.setMinimumSize(260, 260)
         v_layout = QVBoxLayout(self._visage_container)
         v_layout.setContentsMargins(0, 0, 0, 0)
         v_layout.setSpacing(6)
 
         self.hud = OrionParticleCanvas(self._visage_container)
+        self.hud.setMinimumSize(260, 260)
         self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.hud.visageClicked.connect(self.toggle_hud_state)
         v_layout.addWidget(self.hud, stretch=1)
@@ -1076,7 +1092,14 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
+        if self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
+            self.clearMask()
+            # Guard against Wayland compositor transient configure events collapsing expanded HUD
+            if event.size().width() < 700 or event.size().height() < 480:
+                self.setMaximumSize(16777215, 16777215)
+                self.setMinimumSize(700, 480)
+                QTimer.singleShot(10, lambda: self.resize(820, 540))
+        elif not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
             self.setMask(QRegion(QRect(0, 0, self.width(), self.height()), QRegion.RegionType.Ellipse))
         else:
             self.clearMask()
