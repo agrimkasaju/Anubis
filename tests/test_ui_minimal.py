@@ -370,6 +370,10 @@ def test_toggle_maximize_from_compact_reverts_to_compact(qapp):
     win.close()
 
 
+
+
+
+
 def test_visage_double_click_while_maximized_collapses_to_compact(qapp):
     win = MainWindow()
     win.show()
@@ -395,6 +399,46 @@ def test_visage_double_click_while_maximized_collapses_to_compact(qapp):
     assert win._header.isHidden() is True
     assert win._right_panel.isHidden() is True
     win.close()
+
+
+def test_maximize_to_unmaximize_to_sphere_lifecycle(qapp):
+    win = MainWindow()
+    win.show()
+    win.set_hud_expanded(True)
+    win.showMaximized()
+
+    # Step 1: Unmaximize to normal HUD
+    win._toggle_maximize()
+    qapp.processEvents()
+
+    # Step 2: Collapse from HUD to Orion sphere
+    win.set_hud_expanded(False)
+    qapp.processEvents()
+
+    # Allow pending singleShot timers to fire
+    import time
+    start = time.time()
+    while time.time() - start < 0.2:
+        qapp.processEvents()
+
+    assert win.isMaximized() is False
+    assert win._hud_expanded is False
+    assert win.width() == 300
+    assert win.height() == 300
+    assert win.centralWidget().width() == 300
+    assert win.centralWidget().height() == 300
+    assert win._visage_container.width() == 300
+    assert win._visage_container.height() == 300
+    assert win.hud.width() == 300
+    assert win.hud.height() == 300
+    assert win._header.isHidden() is True
+    assert win._right_panel.isHidden() is True
+    win.close()
+
+
+
+
+
 
 
 

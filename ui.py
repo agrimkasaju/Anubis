@@ -1027,6 +1027,10 @@ class MainWindow(QMainWindow):
         if expanded:
             self._pending_collapse_to_orb = False
             self._body_layout.setAlignment(self._visage_container, Qt.AlignmentFlag.AlignCenter)
+            cw = self.centralWidget()
+            if cw:
+                cw.setMinimumSize(820, 540)
+                cw.setMaximumSize(16777215, 16777215)
             self._visage_container.setMinimumSize(260, 260)
             self._visage_container.setMaximumSize(16777215, 16777215)
             self.hud.setMinimumSize(260, 260)
@@ -1043,16 +1047,19 @@ class MainWindow(QMainWindow):
                 self.resize(820, 540)
             QTimer.singleShot(60, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
         else:
-            self._apply_compact_orb_geometry()
-            if self.isMaximized() or self.isFullScreen():
+            was_max = self.isMaximized() or self.isFullScreen()
+            if was_max:
                 self._pending_collapse_to_orb = True
                 self.showNormal()
-                QTimer.singleShot(50, self._apply_compact_orb_geometry)
-                QTimer.singleShot(150, self._apply_compact_orb_geometry)
-                return
-            else:
-                QTimer.singleShot(20, self._apply_compact_orb_geometry)
-                QTimer.singleShot(80, self._apply_compact_orb_geometry)
+            self._apply_compact_orb_geometry()
+            # Under Wayland, force surface unmap/remap so cosmic-comp destroys
+            # the cached 820x540 surface and instantiates a pristine 300x300 surface.
+            if QGuiApplication.platformName() == "wayland" and self.isVisible():
+                self.hide()
+                self._apply_compact_orb_geometry()
+                self.show()
+            QTimer.singleShot(20, self._apply_compact_orb_geometry)
+            QTimer.singleShot(80, self._apply_compact_orb_geometry)
 
     def _apply_compact_orb_geometry(self):
         self._pending_collapse_to_orb = False
@@ -1063,7 +1070,10 @@ class MainWindow(QMainWindow):
         self._root_layout.setSpacing(0)
         self._body_layout.setContentsMargins(0, 0, 0, 0)
         self._body_layout.setSpacing(0)
-        self._body_layout.setAlignment(self._visage_container, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._body_layout.setAlignment(self._visage_container, Qt.AlignmentFlag.AlignCenter)
+        cw = self.centralWidget()
+        if cw:
+            cw.setFixedSize(300, 300)
         self._visage_container.setFixedSize(300, 300)
         self.hud.setFixedSize(300, 300)
         self.setFixedSize(300, 300)
@@ -1202,6 +1212,11 @@ class MainWindow(QMainWindow):
                 if not self.isMaximized() and not self.isFullScreen():
                     if getattr(self, '_pending_collapse_to_orb', False) or not self._hud_expanded:
                         self._apply_compact_orb_geometry()
+                        if QGuiApplication.platformName() == "wayland" and self.isVisible():
+                            if self.size().width() != 300 or self.size().height() != 300:
+                                self.hide()
+                                self._apply_compact_orb_geometry()
+                                self.show()
                         QTimer.singleShot(20, self._apply_compact_orb_geometry)
                         QTimer.singleShot(80, self._apply_compact_orb_geometry)
                     elif self._hud_expanded:
@@ -1209,7 +1224,7 @@ class MainWindow(QMainWindow):
                         self.setMaximumSize(16777215, 16777215)
                         self._header.show()
                         self._right_panel.show()
-                        QTimer.singleShot(50, lambda: self.resize(820, 540))
+                        QTimer.singleShot(50, lambda: self.resize(820, 540) if self._hud_expanded and not self.isMaximized() and not self.isFullScreen() else None)
                         QTimer.singleShot(120, lambda: self.setMinimumSize(700, 480) if self._hud_expanded else None)
 
     def resizeEvent(self, event):
@@ -1219,13 +1234,17 @@ class MainWindow(QMainWindow):
             if event.size().width() < 700 or event.size().height() < 480:
                 self.setMinimumSize(820, 540)
                 self.setMaximumSize(16777215, 16777215)
-                QTimer.singleShot(10, lambda: self.resize(820, 540))
+                QTimer.singleShot(10, lambda: self.resize(820, 540) if self._hud_expanded and not self.isMaximized() and not self.isFullScreen() else None)
         elif not self._hud_expanded and not self.isMaximized() and not self.isFullScreen():
             # Guard against Wayland compositor leaving compact orb expanded to pre-maximize size (e.g. 820x540)
             if (event.size().width() != 300 or event.size().height() != 300) and not getattr(self, '_in_compact_fix', False):
                 self._in_compact_fix = True
                 try:
                     self._apply_compact_orb_geometry()
+                    if QGuiApplication.platformName() == "wayland" and self.isVisible():
+                        self.hide()
+                        self._apply_compact_orb_geometry()
+                        self.show()
                     QTimer.singleShot(10, self._apply_compact_orb_geometry)
                     QTimer.singleShot(50, self._apply_compact_orb_geometry)
                 finally:
