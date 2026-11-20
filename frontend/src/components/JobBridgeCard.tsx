@@ -549,6 +549,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                 </div>
               </div>
               <iframe
+                key={previewPdfUrl}
                 src={previewPdfUrl}
                 className="w-full flex-1 bg-white border-0"
                 title="Application PDF Viewer"

@@ -129,10 +129,15 @@ export async function executeSearch(query: string): Promise<SearchResult> {
 export async function downloadPdfFile(url: string, filename: string): Promise<void> {
   const token = getStoredToken();
   let targetUrl = url;
+  if (!targetUrl.includes('_t=')) {
+    targetUrl += (targetUrl.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+  }
   if (token && !targetUrl.includes('token=')) {
     targetUrl += (targetUrl.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
   }
-  const res = await fetch(targetUrl, { headers: getAuthHeaders() });
+  const res = await fetch(targetUrl, {
+    headers: { ...getAuthHeaders(), 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+  });
   if (!res.ok) throw new Error(`Failed to download PDF (${res.status})`);
   const blob = await res.blob();
   const file = new File([blob], filename, { type: 'application/pdf' });
@@ -160,14 +165,17 @@ export async function downloadPdfFile(url: string, filename: string): Promise<vo
 
 export async function downloadStockPdf(symbol: string): Promise<void> {
   const token = getStoredToken();
-  const params = new URLSearchParams({ symbol });
+  const params = new URLSearchParams({ symbol, _t: Date.now().toString() });
   if (token) params.set('token', token);
   return downloadPdfFile(`/api/stock/pdf?${params.toString()}`, `${symbol}_Analysis.pdf`);
 }
 
 export function getJobPdfUrl(fileName: string): string {
   const token = getStoredToken();
-  const params = new URLSearchParams({ file: fileName });
+  const params = new URLSearchParams({
+    file: fileName,
+    _t: Date.now().toString(),
+  });
   if (token) params.set('token', token);
   return `/api/job/pdf?${params.toString()}`;
 }

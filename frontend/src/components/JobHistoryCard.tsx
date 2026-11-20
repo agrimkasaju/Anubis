@@ -558,6 +558,7 @@ export const JobHistoryCard: React.FC<JobHistoryCardProps> = ({ onHistoryChange 
                 </div>
               </div>
               <iframe
+                key={previewPdfUrl}
                 src={previewPdfUrl}
                 className="w-full flex-1 bg-white border-0"
                 title="Archived PDF Viewer"
