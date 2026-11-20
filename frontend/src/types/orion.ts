@@ -30,10 +30,20 @@ export interface CandidateJob {
   index?: number;
 }
 
+export interface TailoringStatus {
+  running: boolean;
+  status_text: string;
+  current_job?: string;
+  progress?: string;
+  model?: string;
+}
+
 export interface JobPendingResponse {
   pending: boolean;
-  stage?: 'screen_batch' | 'review' | 'screen' | string;
+  stage?: 'screen_batch' | 'review' | 'screen' | 'tailoring' | string;
   status?: string;
+  selected_key?: string;
+  tailoring_status?: TailoringStatus | null;
   job?: PendingJob;
   candidates?: CandidateJob[];
   count?: number;

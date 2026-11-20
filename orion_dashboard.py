@@ -684,11 +684,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             batchState.classList.remove('hidden');
 
             const candidates = data.candidates || [];
-            pill.innerText = `● ${candidates.length} Candidate${candidates.length === 1 ? '' : 's'}`;
-            pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-semibold';
+            const isTailoring = (data.status === 'selected' || (data.tailoring_status && data.tailoring_status.running));
+            const selectedKey = data.selected_key;
+
+            pill.innerText = isTailoring ? '● Tailoring with Gemini 4 Hydrogen...' : `● ${candidates.length} Candidate${candidates.length === 1 ? '' : 's'}`;
+            pill.className = isTailoring
+              ? 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold animate-pulse'
+              : 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-semibold';
             const countLabel = document.getElementById('batch-count-label');
             if (countLabel) {
-              countLabel.innerText = `${candidates.length} Listing${candidates.length === 1 ? '' : 's'}`;
+              countLabel.innerText = isTailoring
+                ? (data.tailoring_status?.status_text || 'Thinking & Tailoring...')
+                : `${candidates.length} Listing${candidates.length === 1 ? '' : 's'}`;
             }
 
             const listEl = document.getElementById('job-candidates-list');
@@ -709,8 +716,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
               const safeAge = escapeHtml(c.age_label || 'Recent');
               const url = c.url || '#';
 
+              const isThisTailoring = isTailoring && (safeKey === selectedKey);
+              const tailorBtn = isThisTailoring
+                ? `<button disabled class="px-3 py-1.5 rounded-lg bg-cyan-700/80 text-cyan-200 font-semibold text-xs flex items-center space-x-1 cursor-wait shadow-sm"><span class="animate-spin inline-block mr-1">↻</span><span>Tailoring...</span></button>`
+                : `<button id="btn-tailor-${safeKey}" onclick="selectCandidate('${safeKey}')" ${isTailoring ? 'disabled' : ''} class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs transition shadow-sm flex items-center space-x-1 disabled:opacity-40 disabled:cursor-not-allowed"><span>⚡</span><span>Tailor</span></button>`;
+              const skipBtn = `<button onclick="skipCandidate('${safeKey}')" ${isTailoring ? 'disabled' : ''} title="Skip this job" class="px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 text-xs border border-zinc-700/60 transition disabled:opacity-40 disabled:cursor-not-allowed">✕</button>`;
+
               return `
-                <div id="candidate-row-${safeKey}" class="p-3 bg-zinc-950/70 hover:bg-zinc-950 border border-zinc-800/80 hover:border-zinc-700 rounded-xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div id="candidate-row-${safeKey}" class="p-3 ${isThisTailoring ? 'bg-cyan-950/40 border-cyan-500/50' : 'bg-zinc-950/70 hover:bg-zinc-950 border-zinc-800/80 hover:border-zinc-700'} border rounded-xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div class="flex items-start sm:items-center space-x-3 min-w-0">
                     <span class="w-6 h-6 rounded-md bg-zinc-800 text-zinc-300 font-mono text-xs flex items-center justify-center font-bold shrink-0">#${c.index || (i + 1)}</span>
                     <div class="min-w-0">
@@ -730,16 +743,30 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <a href="${url}" target="_blank" class="px-2.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs border border-zinc-700/60 transition flex items-center space-x-1">
                       <span>↗</span><span>View</span>
                     </a>
-                    <button id="btn-tailor-${safeKey}" onclick="selectCandidate('${safeKey}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-xs transition shadow-sm flex items-center space-x-1">
-                      <span>⚡</span><span>Tailor</span>
-                    </button>
-                    <button onclick="skipCandidate('${safeKey}')" title="Skip this job" class="px-2.5 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-rose-950/40 text-zinc-400 hover:text-rose-400 text-xs border border-zinc-700/60 transition">
-                      ✕
-                    </button>
+                    ${tailorBtn}
+                    ${skipBtn}
                   </div>
                 </div>
               `;
             }).join('');
+            return;
+          }
+
+          if (data.stage === 'tailoring') {
+            emptyState.classList.add('hidden');
+            batchState.classList.add('hidden');
+            pendingState.classList.remove('hidden');
+            pill.innerText = '● Gemini 4 Hydrogen Active';
+            pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold animate-pulse';
+            document.getElementById('job-card-header').className = 'bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-3.5 transition-colors';
+            document.getElementById('job-stage-badge').innerText = '🧠 Synthesizing Tailored Application';
+            document.getElementById('job-stage-badge').className = 'text-xs font-mono uppercase tracking-wider text-cyan-400 font-semibold';
+            document.getElementById('job-title').innerText = data.job?.title || 'Tailoring Application';
+            document.getElementById('job-company').innerText = data.job?.company || 'Target Organization';
+            document.getElementById('job-pdf-docs').classList.add('hidden');
+            document.getElementById('job-btn-approve').disabled = true;
+            document.getElementById('job-btn-approve').innerText = data.tailoring_status?.status_text || 'Thinking & Compiling PDFs...';
+            document.getElementById('job-btn-skip').disabled = true;
             return;
           }
 
@@ -1946,6 +1973,60 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # API: Check Pending Job Bridge
         if path == "/api/job/pending":
             state = bridge.get_current_state()
+
+            # Read pipeline status to dynamically track Gemini 4 Hydrogen progress
+            status_file = Path.home() / ".orion_job_status.json"
+            tailoring_status = None
+            if status_file.exists():
+                try:
+                    s_data = json.loads(status_file.read_text(encoding="utf-8"))
+                    if s_data.get("running"):
+                        tailoring_status = {
+                            "running": True,
+                            "status_text": s_data.get("status_text", ""),
+                            "current_job": s_data.get("current_job", ""),
+                            "progress": s_data.get("progress", ""),
+                            "model": "Gemini 4 Hydrogen",
+                        }
+                except Exception:
+                    pass
+
+            # If pipeline is running and actively tailoring a job:
+            if tailoring_status and tailoring_status.get("running"):
+                st = tailoring_status.get("status_text", "").lower()
+                if any(w in st for w in ["tailor", "scrap", "export", "waiting"]):
+                    # If state is screen_batch, maintain the batch with active candidate highlighted
+                    if state and state.get("stage") == "screen_batch":
+                        candidates = state.get("candidates") or []
+                        self._send_json({
+                            "pending": True,
+                            "stage": "screen_batch",
+                            "status": "selected",
+                            "selected_key": state.get("selected_key"),
+                            "tailoring_status": tailoring_status,
+                            "candidates": candidates,
+                            "count": len(candidates),
+                        })
+                        return
+                    # Otherwise, if in single/manual tailoring mode:
+                    elif not state or state.get("status") not in ("pending", "selected"):
+                        comp_title = tailoring_status.get("current_job", "")
+                        comp = comp_title.split(" - ")[0] if " - " in comp_title else comp_title
+                        title = comp_title.split(" - ")[1] if " - " in comp_title else "Position"
+                        self._send_json({
+                            "pending": True,
+                            "stage": "tailoring",
+                            "status": "processing",
+                            "selected_key": state.get("selected_key") if state else None,
+                            "tailoring_status": tailoring_status,
+                            "job": {
+                                "company": comp,
+                                "title": title,
+                                "stage": "tailoring"
+                            }
+                        })
+                        return
+
             if not state or state.get("status") not in ("pending", "selected"):
                 self._send_json({"pending": False})
                 return
@@ -1957,6 +2038,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "pending": True,
                     "stage": "screen_batch",
                     "status": state.get("status"),
+                    "selected_key": state.get("selected_key"),
+                    "tailoring_status": tailoring_status,
                     "candidates": candidates,
                     "count": len(candidates),
                 })
@@ -1976,6 +2059,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     "pending": True,
                     "stage": "review",
                     "status": state.get("status"),
+                    "selected_key": state.get("selected_key"),
+                    "tailoring_status": tailoring_status,
                     "job": pending,
                 })
                 return

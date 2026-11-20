@@ -56,6 +56,20 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
     };
   }, [previewPdfUrl]);
 
+  // Automatically reset local selecting state once Stage 2 Review arrives or queue empties
+  useEffect(() => {
+    if (pendingBridge?.stage === 'review' || !pendingBridge?.pending) {
+      setSelectingKey(null);
+      setFeedback(null);
+    }
+  }, [pendingBridge?.stage, pendingBridge?.pending]);
+
+  const activeTailoringKey =
+    selectingKey ||
+    (pendingBridge?.status === 'selected' ? pendingBridge?.selected_key : null) ||
+    (pendingBridge?.tailoring_status?.running ? pendingBridge?.selected_key : null);
+  const isAnyTailoring = Boolean(activeTailoringKey);
+
   const handleResolve = async (approved: boolean) => {
     setResolving(true);
     setFeedback(null);
@@ -75,15 +89,12 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
 
   const handleSelectCandidate = async (jobKey: string) => {
     setSelectingKey(jobKey);
-    setFeedback('Scraping posting and tailoring application documents...');
+    setFeedback('Scraping posting and tailoring application documents with Gemini 4 Hydrogen...');
     try {
       await selectCandidate(jobKey);
-      setTimeout(() => {
-        onRefresh();
-      }, 800);
+      onRefresh();
     } catch (err: unknown) {
       setFeedback(err instanceof Error ? err.message : 'Selection failed');
-    } finally {
       setSelectingKey(null);
     }
   };
@@ -154,8 +165,12 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
             className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full border ${
               isLoading
                 ? 'bg-slate-900 text-slate-500 border-slate-800'
+                : isAnyTailoring
+                ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/50 animate-pulse font-semibold'
                 : isScreenBatch
                 ? 'bg-cyan-950/50 text-cyan-300 border-cyan-500/40 font-semibold'
+                : pendingBridge?.stage === 'tailoring'
+                ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/50 animate-pulse font-semibold'
                 : pendingJob
                 ? 'bg-amber-950/40 text-amber-300 border-amber-500/40 animate-pulse font-semibold'
                 : 'bg-slate-900 text-slate-500 border-slate-800'
@@ -163,8 +178,12 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
           >
             {isLoading
               ? 'POLLING...'
+              : isAnyTailoring
+              ? '● GEMINI 4 HYDROGEN TAILORING'
               : isScreenBatch
               ? `● ${activeCandidates.length} CANDIDATES READY`
+              : pendingBridge?.stage === 'tailoring'
+              ? '● TAILORING IN PROGRESS'
               : pendingJob
               ? 'ACTION REQUIRED'
               : 'IDLE'}
@@ -205,13 +224,39 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
               <button
                 type="button"
                 onClick={handleSkipAll}
-                disabled={skippingAll}
+                disabled={skippingAll || isAnyTailoring}
                 className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-[11px] font-mono border border-slate-800 transition disabled:opacity-50"
               >
                 <RotateCcw className="w-3 h-3 text-slate-400" />
                 <span>Skip All & Next</span>
               </button>
             </div>
+
+            {/* Dynamic Gemini 4 Hydrogen Tailoring Progress Banner */}
+            {isAnyTailoring && (
+              <div className="bg-cyan-950/40 border border-cyan-500/40 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-pulse">
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+                  <div className="min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs font-mono font-bold text-cyan-300">
+                        Gemini 4 Hydrogen Active
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
+                        Thinking & Tailoring
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 truncate mt-0.5">
+                      {pendingBridge?.tailoring_status?.status_text ||
+                        'Synthesizing LaTeX CV and Cover Letter in parallel...'}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-mono text-cyan-400/80 shrink-0">
+                  Model Latency Buffer Active
+                </span>
+              </div>
+            )}
 
             {/* Candidates Scroll List */}
             <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
@@ -224,10 +269,16 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                   badgeColor = 'bg-amber-500/20 text-amber-400 border-amber-500/40';
                 }
 
+                const isThisTailoring = activeTailoringKey === c.job_key;
+
                 return (
                   <div
                     key={c.job_key || i}
-                    className="p-3 bg-slate-950/70 hover:bg-slate-950 border border-sky-900/30 hover:border-cyan-500/40 rounded-xl transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
+                    className={`p-3 rounded-xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm ${
+                      isThisTailoring
+                        ? 'bg-cyan-950/40 border-cyan-500/50 ring-1 ring-cyan-500/40 shadow-lg shadow-cyan-950/30'
+                        : 'bg-slate-950/70 hover:bg-slate-950 border-sky-900/30 hover:border-cyan-500/40'
+                    }`}
                   >
                     <div className="flex items-start sm:items-center space-x-3 min-w-0">
                       <span className="w-6 h-6 rounded-md bg-slate-900 border border-slate-800 text-cyan-300 font-mono text-xs flex items-center justify-center font-bold shrink-0">
@@ -281,13 +332,17 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                       <button
                         type="button"
                         onClick={() => handleSelectCandidate(c.job_key)}
-                        disabled={selectingKey === c.job_key}
-                        className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-mono font-bold text-xs transition shadow-sm disabled:opacity-50"
+                        disabled={isAnyTailoring}
+                        className={`flex items-center space-x-1 px-3 py-1.5 rounded-lg font-mono font-bold text-xs transition shadow-sm ${
+                          isThisTailoring
+                            ? 'bg-cyan-600/90 text-cyan-100 cursor-wait ring-2 ring-cyan-400/50'
+                            : 'bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white disabled:opacity-40 disabled:cursor-not-allowed'
+                        }`}
                       >
-                        {selectingKey === c.job_key ? (
+                        {isThisTailoring ? (
                           <>
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            <span>Tailoring...</span>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Tailoring (Thinking)...</span>
                           </>
                         ) : (
                           <>
@@ -299,7 +354,8 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                       <button
                         type="button"
                         onClick={() => handleSkipCandidate(c.job_key)}
-                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-900/50 transition"
+                        disabled={isAnyTailoring}
+                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-900/50 transition disabled:opacity-40 disabled:cursor-not-allowed"
                         title="Skip this listing"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -308,6 +364,41 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* STAGE: Dedicated Dynamic Tailoring View (Gemini 4 Hydrogen) */}
+        {isPending && pendingBridge?.stage === 'tailoring' && (
+          <div className="space-y-4 pt-1">
+            <div className="bg-cyan-950/25 border border-cyan-500/40 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-300 font-bold px-2 py-0.5 bg-cyan-500/15 rounded flex items-center space-x-1.5">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping inline-block" />
+                  <span>Gemini 4 Hydrogen Active</span>
+                </span>
+                <span className="text-xs font-mono text-cyan-400/80">Reasoning Effort: Medium</span>
+              </div>
+              <div>
+                <h3 className="text-base md:text-lg font-bold text-white tracking-tight">
+                  {pendingBridge.job?.company || pendingBridge.tailoring_status?.current_job || 'Target Position'}
+                </h3>
+                <p className="text-xs font-medium text-slate-300 mt-0.5">
+                  {pendingBridge.job?.title || 'Drafting tailored CV and Cover Letter...'}
+                </p>
+              </div>
+              <div className="p-3 bg-slate-950/80 border border-cyan-500/30 rounded-lg flex items-center space-x-3">
+                <Loader2 className="w-5 h-5 text-cyan-400 animate-spin shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-mono text-cyan-200 truncate">
+                    {pendingBridge.tailoring_status?.status_text ||
+                      'Synthesizing LaTeX document templates and tailoring experience...'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Live dynamic state: Review documents will appear automatically once compiled.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         )}

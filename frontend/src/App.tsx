@@ -69,14 +69,19 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Initial load and periodic poll
+  // Initial load and dynamic periodic poll (speeds up to 2s when tailoring is active)
   useEffect(() => {
     refreshFeeds();
+    const isTailoringActive =
+      pendingBridge?.status === 'selected' ||
+      pendingBridge?.stage === 'tailoring' ||
+      Boolean(pipelineStatus?.running);
+    const pollInterval = isTailoringActive ? 2000 : 4000;
     const interval = setInterval(() => {
       refreshFeeds();
-    }, 4000);
+    }, pollInterval);
     return () => clearInterval(interval);
-  }, [refreshFeeds, token]);
+  }, [refreshFeeds, token, pendingBridge?.status, pendingBridge?.stage, pipelineStatus?.running]);
 
   const handleAuthSuccess = () => {
     const updatedToken = getStoredToken();
