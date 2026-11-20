@@ -118,6 +118,7 @@ def screen_process(
     client = genai.Client(api_key=_get_api_key())
     last_err = None
 
+    from config import get_gemini_config
     for model in models:
         try:
             res = client.models.generate_content(
@@ -125,7 +126,8 @@ def screen_process(
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     prompt
-                ]
+                ],
+                config=get_gemini_config(),
             )
             desc = res.text.strip()
             print(f"[ScreenProcess] 🖥️ Screen analysis ({model}): {desc}")

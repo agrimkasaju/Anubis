@@ -15,8 +15,9 @@ if _ENV_PATH.exists():
     except Exception:
         pass
 
-DEFAULT_GEMINI_MODEL      = "gemini-4-argon"
-DEFAULT_GEMINI_LITE_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_MODEL          = "gemini-4-neon"
+DEFAULT_GEMINI_LITE_MODEL     = "gemini-4-neon"
+DEFAULT_GEMINI_THINKING_LEVEL = "low"
 
 # Use a dedicated Live API endpoint for bidiGenerateContent:
 DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.8-live"
@@ -49,6 +50,19 @@ def get_gemini_lite_model(default: str | None = None) -> str:
 
 def get_gemini_live_model(default: str | None = None) -> str:
     return os.getenv("GEMINI_LIVE_MODEL") or get_config().get("gemini_live_model") or default or DEFAULT_GEMINI_LIVE_MODEL
+
+
+def get_gemini_thinking_level(default: str | None = None) -> str:
+    return os.getenv("GEMINI_THINKING_LEVEL") or get_config().get("gemini_thinking_level") or default or DEFAULT_GEMINI_THINKING_LEVEL
+
+
+def get_gemini_config(**kwargs):
+    from google.genai import types
+    cfg_kwargs = dict(kwargs)
+    thinking_level = get_gemini_thinking_level()
+    if thinking_level:
+        cfg_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=thinking_level)
+    return types.GenerateContentConfig(**cfg_kwargs)
 
 
 DEFAULT_ORION_VOICE = "Orion"

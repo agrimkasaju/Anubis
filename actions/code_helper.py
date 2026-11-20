@@ -501,11 +501,12 @@ Be specific and actionable. If you see an error message, quote it exactly."""
             analysis_prompt,
         ]
 
-        from config import get_gemini_model
+        from config import get_gemini_model, get_gemini_config
 
         response = client.models.generate_content(
             model=get_gemini_model(),
             contents=contents,
+            config=get_gemini_config(),
         )
 
         analysis = response.text.strip()

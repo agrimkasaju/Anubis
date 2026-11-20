@@ -33,13 +33,13 @@ def _get_api_key() -> str:
 
 def _gemini_search(query: str) -> str:
     from google import genai
-    from config import get_gemini_model
+    from config import get_gemini_model, get_gemini_config
 
     client   = genai.Client(api_key=_get_api_key())
     response = client.models.generate_content(
         model=get_gemini_model(),
         contents=query,
-        config={"tools": [{"google_search": {}}]},
+        config=get_gemini_config(tools=[{"google_search": {}}]),
     )
 
     text = ""
