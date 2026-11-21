@@ -89,7 +89,8 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
 
   const handleSelectCandidate = async (jobKey: string) => {
     setSelectingKey(jobKey);
-    setFeedback('Scraping posting and tailoring application documents with Gemini 4 Hydrogen...');
+    const activeModel = pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash';
+    setFeedback(`Scraping posting and tailoring application documents with ${activeModel}...`);
     try {
       await selectCandidate(jobKey);
       onRefresh();
@@ -179,7 +180,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
             {isLoading
               ? 'POLLING...'
               : isAnyTailoring
-              ? '● GEMINI 4 HYDROGEN TAILORING'
+              ? `● ${(pendingBridge?.tailoring_status?.model || 'GEMINI 3.8 FLASH').toUpperCase()} TAILORING`
               : isScreenBatch
               ? `● ${activeCandidates.length} CANDIDATES READY`
               : pendingBridge?.stage === 'tailoring'
@@ -240,10 +241,10 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center space-x-2">
                       <span className="text-xs font-mono font-bold text-cyan-300">
-                        Gemini 4 Hydrogen Active
+                        {pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash'} Active
                       </span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
-                        Thinking & Tailoring
+                        Tailoring Documents
                       </span>
                     </div>
                     <p className="text-xs text-slate-300 truncate mt-0.5">
@@ -368,16 +369,16 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
           </div>
         )}
 
-        {/* STAGE: Dedicated Dynamic Tailoring View (Gemini 4 Hydrogen) */}
+        {/* STAGE: Dedicated Dynamic Tailoring View */}
         {isPending && pendingBridge?.stage === 'tailoring' && (
           <div className="space-y-4 pt-1">
             <div className="bg-cyan-950/25 border border-cyan-500/40 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-300 font-bold px-2 py-0.5 bg-cyan-500/15 rounded flex items-center space-x-1.5">
                   <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping inline-block" />
-                  <span>Gemini 4 Hydrogen Active</span>
+                  <span>{pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash'} Active</span>
                 </span>
-                <span className="text-xs font-mono text-cyan-400/80">Reasoning Effort: Medium</span>
+                <span className="text-xs font-mono text-cyan-400/80">AI Job Pipeline</span>
               </div>
               <div>
                 <h3 className="text-base md:text-lg font-bold text-white tracking-tight">
@@ -404,7 +405,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
         )}
 
         {/* STAGE 2: Single Tailored Application Review State */}
-        {isPending && !isScreenBatch && pendingJob && (
+        {isPending && !isScreenBatch && pendingBridge?.stage !== 'tailoring' && pendingJob && (
           <div className="space-y-4 pt-1">
             {/* Job Summary Banner */}
             <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-3.5 space-y-1.5">

@@ -687,7 +687,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             const isTailoring = (data.status === 'selected' || (data.tailoring_status && data.tailoring_status.running));
             const selectedKey = data.selected_key;
 
-            pill.innerText = isTailoring ? '● Tailoring with Gemini 4 Hydrogen...' : `● ${candidates.length} Candidate${candidates.length === 1 ? '' : 's'}`;
+            const activeModel = data.tailoring_status?.model || 'Gemini 3.8 Flash';
+            pill.innerText = isTailoring ? `● Tailoring with ${activeModel}...` : `● ${candidates.length} Candidate${candidates.length === 1 ? '' : 's'}`;
             pill.className = isTailoring
               ? 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold animate-pulse'
               : 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 font-semibold';
@@ -1986,7 +1987,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                             "status_text": s_data.get("status_text", ""),
                             "current_job": s_data.get("current_job", ""),
                             "progress": s_data.get("progress", ""),
-                            "model": "Gemini 4 Hydrogen",
+                            "model": s_data.get("model", "Gemini 3.8 Flash"),
                         }
                 except Exception:
                     pass
