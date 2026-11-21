@@ -757,7 +757,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             emptyState.classList.add('hidden');
             batchState.classList.add('hidden');
             pendingState.classList.remove('hidden');
-            pill.innerText = '● Gemini 4 Hydrogen Active';
+            pill.innerText = `● ${data.tailoring_status?.model || 'Gemini 3.8 Flash High'} Active`;
             pill.className = 'text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold animate-pulse';
             document.getElementById('job-card-header').className = 'bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-3.5 transition-colors';
             document.getElementById('job-stage-badge').innerText = '🧠 Synthesizing Tailored Application';
@@ -1975,7 +1975,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/job/pending":
             state = bridge.get_current_state()
 
-            # Read pipeline status to dynamically track Gemini 4 Hydrogen progress
+            # Read pipeline status to dynamically track AI tailoring progress
             status_file = Path.home() / ".orion_job_status.json"
             tailoring_status = None
             if status_file.exists():
@@ -1987,7 +1987,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                             "status_text": s_data.get("status_text", ""),
                             "current_job": s_data.get("current_job", ""),
                             "progress": s_data.get("progress", ""),
-                            "model": s_data.get("model", "Gemini 3.8 Flash"),
+                            "model": s_data.get("model", "Gemini 3.8 Flash High"),
                         }
                 except Exception:
                     pass

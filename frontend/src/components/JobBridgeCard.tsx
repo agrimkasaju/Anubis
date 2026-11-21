@@ -89,7 +89,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
 
   const handleSelectCandidate = async (jobKey: string) => {
     setSelectingKey(jobKey);
-    const activeModel = pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash';
+    const activeModel = pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash High';
     setFeedback(`Scraping posting and tailoring application documents with ${activeModel}...`);
     try {
       await selectCandidate(jobKey);
@@ -180,7 +180,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
             {isLoading
               ? 'POLLING...'
               : isAnyTailoring
-              ? `● ${(pendingBridge?.tailoring_status?.model || 'GEMINI 3.8 FLASH').toUpperCase()} TAILORING`
+              ? `● ${(pendingBridge?.tailoring_status?.model || 'GEMINI 3.8 FLASH HIGH').toUpperCase()} TAILORING`
               : isScreenBatch
               ? `● ${activeCandidates.length} CANDIDATES READY`
               : pendingBridge?.stage === 'tailoring'
@@ -233,7 +233,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
               </button>
             </div>
 
-            {/* Dynamic Gemini 4 Hydrogen Tailoring Progress Banner */}
+            {/* Dynamic AI Tailoring Progress Banner */}
             {isAnyTailoring && (
               <div className="bg-cyan-950/40 border border-cyan-500/40 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 animate-pulse">
                 <div className="flex items-center space-x-2.5 min-w-0">
@@ -241,7 +241,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center space-x-2">
                       <span className="text-xs font-mono font-bold text-cyan-300">
-                        {pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash'} Active
+                        {pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash High'} Active
                       </span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono">
                         Tailoring Documents
@@ -376,7 +376,7 @@ export const JobBridgeCard: React.FC<JobBridgeCardProps> = ({
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-300 font-bold px-2 py-0.5 bg-cyan-500/15 rounded flex items-center space-x-1.5">
                   <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping inline-block" />
-                  <span>{pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash'} Active</span>
+                  <span>{pendingBridge?.tailoring_status?.model || 'Gemini 3.8 Flash High'} Active</span>
                 </span>
                 <span className="text-xs font-mono text-cyan-400/80">AI Job Pipeline</span>
               </div>
